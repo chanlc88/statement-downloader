@@ -31,92 +31,52 @@ public class SecretParsingTests
     }
 }
 
-public class EzpropmgrActionTests
+public class RunCommandActionTests
 {
-    [Fact]
-    public void Description_can_use_shifted_dates_and_vendor_account()
-    {
-        var account = new AccountConfig { Id = "gas", Kind = DocumentKind.Bill };
-        var doc = new DocumentRecord { DocumentDate = new DateOnly(2026, 3, 10), StatementNumber = "111", VendorAccountNumber = "1234567", Path = "/x/2026-03-10-Gas.pdf" };
-        Assert.Equal("Natural Gas - February 2026", EzpropmgrExpenseAction.Render("Natural Gas - {date-1M:MMMM yyyy}", account, doc));
-        Assert.Equal("2026-03-17 | Invoice 111 | Billing account 1234567 | 2026-03-10-Gas.pdf",
-            EzpropmgrExpenseAction.Render("{date+7d:yyyy-MM-dd} | Invoice {statement} | Billing account {vendorAccount} | {fileName}", account, doc));
-    }
+    private static readonly AccountConfig Account = new() { Id = "gas", Kind = DocumentKind.Bill };
 
-    private sealed class FakeSecrets : ISecretProvider
+    private static DocumentRecord Doc(decimal? amount = 73.21m, string? statement = "111") => new()
     {
-        public Task<SiteCredential> GetCredentialAsync(string reference, CancellationToken ct = default) => throw new NotSupportedException();
-        public Task<string> GetValueAsync(string reference, CancellationToken ct = default) => Task.FromResult("token-123");
-    }
-
-    private sealed class FakeApi(string listJson) : HttpMessageHandler
-    {
-        public List<(HttpMethod Method, string Url, string? Body, string? IdempotencyKey)> Calls { get; } = [];
-
-        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
-        {
-            var body = request.Content is StringContent ? await request.Content.ReadAsStringAsync(ct) : null;
-            Calls.Add((request.Method, request.RequestUri!.ToString(), body, request.Headers.TryGetValues("Idempotency-Key", out var v) ? v.First() : null));
-            Assert.Equal("Bearer token-123", request.Headers.Authorization?.ToString());
-            var json = request.Method == HttpMethod.Get ? listJson
-                : request.RequestUri!.AbsolutePath.EndsWith("/files") ? """{"success":true}""" : """{"success":true,"id":1001}""";
-            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
-        }
-    }
-
-    private static (ActionContext, string) Context(decimal? amount = 73.21m)
-    {
-        var pdf = Path.Combine(Path.GetTempPath(), $"sd-test-{Guid.NewGuid():N}.pdf");
-        File.WriteAllText(pdf, "%PDF-1.4 test");
-        var account = new AccountConfig { Id = "water", Kind = DocumentKind.Bill };
-        var doc = new DocumentRecord { AccountId = "water", DocumentDate = new(2026, 11, 18), StatementNumber = "98765432", Amount = amount, Path = pdf };
-        var settings = new Dictionary<string, string>
-        {
-            ["type"] = "ezpropmgr-expense", ["baseUrl"] = "https://example.test", ["tokenSecret"] = "env:X", ["buildingId"] = "5",
-            ["category"] = "UTILITIES", ["paidTo"] = "DeKalb County", ["description"] = "Water & Sewer Bill - {date:yyyy-MM}", ["referencePrefix"] = "DKWTR-",
-        };
-        return (new ActionContext { Account = account, Document = doc, Settings = settings, Secrets = new FakeSecrets(), Log = NullLogger.Instance }, pdf);
-    }
+        AccountId = "gas", DocumentDate = new DateOnly(2026, 3, 10), StatementNumber = statement, Amount = amount,
+        VendorAccountNumber = "1234567", Path = Path.Combine(Path.GetTempPath(), "2026-03-10-Gas.pdf"),
+    };
 
     [Fact]
-    public async Task Records_and_attaches_new_expense()
+    public void Renders_document_tokens_and_shifted_dates()
     {
-        var api = new FakeApi("""{"data":[]}""");
-        var (ctx, pdf) = Context();
-        var result = await new EzpropmgrExpenseAction(new HttpClient(api)).RunAsync(ctx);
-
-        Assert.True(result.Succeeded, result.Summary);
-        Assert.Contains("1001", result.Summary);
-        Assert.Equal(3, api.Calls.Count);
-        Assert.Contains("buildingId=5", api.Calls[0].Url);
-        var post = api.Calls[1];
-        Assert.StartsWith("statement-downloader-", post.IdempotencyKey);
-        Assert.Contains("\"checkNumber\":\"DKWTR-98765432\"", post.Body!);
-        Assert.Contains("\"description\":\"Water & Sewer Bill - 2026-11\"", post.Body!.Replace("\\u0026", "&"));
-        Assert.EndsWith("/api/Expense/1001/files", api.Calls[2].Url);
-        File.Delete(pdf);
+        Assert.Equal("Natural Gas - February 2026", RunCommandAction.Render("Natural Gas - {date-1M:MMMM yyyy}", Account, Doc()));
+        Assert.Equal("2026-03-17 | Invoice 111 | Billing account 1234567 | 2026-03-10-Gas.pdf | 73.21 | 2026-03-10 | 2026/03 | gas bill",
+            RunCommandAction.Render("{date+7d:yyyy-MM-dd} | Invoice {statement} | Billing account {vendorAccount} | {fileName} | {amount} | {date} | {year}/{month} | {account} {kind}", Account, Doc()));
+        Assert.Equal("{unknown} {other:x}", RunCommandAction.Render("{unknown} {other:x}", Account, Doc()));
     }
 
     [Theory]
-    [InlineData("""{"data":[{"id":1000,"checkNumber":"DKWTR-98765432","expenseAmount":1,"entryDate":"2026-01-01T00:00:00"}]}""")]
-    [InlineData("""{"data":[{"id":1000,"checkNumber":null,"expenseAmount":73.21,"entryDate":"2026-11-18T00:00:00"}]}""")]
-    public async Task Skips_when_already_recorded(string existing)
+    [InlineData("{amount}")]
+    [InlineData("REF-{statement}")]
+    public void Missing_amount_or_statement_is_an_error(string template) =>
+        Assert.Throws<InvalidDataException>(() => RunCommandAction.Render(template, Account, Doc(amount: null, statement: null)));
+
+    private static ActionContext Context(DocumentRecord doc, string args) => new()
     {
-        var api = new FakeApi(existing);
-        var (ctx, pdf) = Context();
-        var result = await new EzpropmgrExpenseAction(new HttpClient(api)).RunAsync(ctx);
-        Assert.True(result.Succeeded);
-        Assert.Contains("Already recorded as ezpropmgr expense 1000", result.Summary);
-        Assert.Single(api.Calls);
-        File.Delete(pdf);
+        Account = Account, Document = doc, Secrets = null!, Log = NullLogger.Instance,
+        Settings = OperatingSystem.IsWindows()
+            ? new Dictionary<string, string> { ["type"] = "run-command", ["command"] = "cmd", ["args"] = "/c echo " + args }
+            : new Dictionary<string, string> { ["type"] = "run-command", ["command"] = "sh", ["args"] = "-c \"echo " + args + "\"" },
+    };
+
+    [Fact]
+    public async Task Runs_the_command_with_rendered_args()
+    {
+        var result = await new RunCommandAction().RunAsync(Context(Doc(), "Gas {date-1M:MMMM} {amount}"));
+        Assert.True(result.Succeeded, result.Summary);
+        Assert.Equal("Gas February 73.21", result.Summary);
     }
 
     [Fact]
-    public async Task Fails_without_amount()
+    public async Task Does_not_run_without_the_amount()
     {
-        var (ctx, pdf) = Context(amount: null);
-        var result = await new EzpropmgrExpenseAction(new HttpClient(new FakeApi("{}"))).RunAsync(ctx);
+        var result = await new RunCommandAction().RunAsync(Context(Doc(amount: null), "{amount}"));
         Assert.False(result.Succeeded);
-        File.Delete(pdf);
+        Assert.Contains("No amount", result.Summary);
     }
 }

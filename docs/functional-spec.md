@@ -25,8 +25,8 @@ manager; the app reads them only at the moment it signs in.
    a fresh "remember this device", the app asks you, opens the site for you, and
    finishes the job as soon as you're done.
 5. **Actions after download** — optionally hand each new document to something else:
-   record it as an expense in a property-management system, call a webhook, or run a
-   script.
+   call a webhook, or run a script (for example one that records it as an expense in
+   your accounting system).
 
 ### Non-goals
 
@@ -46,7 +46,7 @@ manager; the app reads them only at the moment it signs in.
 | **Cycle** | How often an account produces a new document, and how much the date varies. Learned from past document dates. |
 | **Window** | The date range when the next document is expected. |
 | **Issue** | Something waiting on you (sign-in help, wrong password, overdue document). Open until resolved. |
-| **Action** | Something done with a new document after it's filed (e.g. `ezpropmgr-expense`, `webhook`, `run-command`). |
+| **Action** | Something done with a new document after it's filed (e.g. `webhook`, `run-command`). |
 
 ## 3. Configuration
 
@@ -172,9 +172,25 @@ never repeated, and failures are retried on the next run and reported.
 
 | Type | What it does |
 |---|---|
-| `ezpropmgr-expense` | Records the document as an expense in ezpropmgr (rtrack2025) via its API and attaches the PDF. Checks the server for an existing expense first (same reference, or same amount and date). Settings: `baseUrl`, `tokenSecret`, `buildingId`/`unitId`/`portfolioId`, `category`, optional `type`, `subType`, `paidTo`, `description`, `notes`, `referencePrefix`. `description` and `notes` accept the file-name tokens plus `{fileName}`, `{vendorAccount}` (the account number read from the document) and shifted dates such as `{date-1M:MMMM yyyy}` — for bills issued the month after the usage they cover. |
-| `webhook` | POSTs the document details (JSON) to a URL. |
-| `run-command` | Runs a command with the document's path and details as arguments/environment variables. |
+| `webhook` | POSTs the document details (JSON) to a URL. Settings: `url`, optional `authorizationSecret`. |
+| `run-command` | Runs a program. Settings: `command`, optional `args`, `workingDirectory`, `timeoutMinutes`. The first line it prints is shown as the result; a non-zero exit code is a failure, retried on the next run. |
+
+`args` can use these tokens:
+
+| Token | Value |
+|---|---|
+| `{path}`, `{fileName}` | The saved PDF's full path, and just its name |
+| `{date}`, `{date:FORMAT}` | The document date as `yyyy-MM-dd`, or in any .NET date format |
+| `{date-1M:FORMAT}`, `{date+7d:FORMAT}` | The date shifted by months (`M`) or days (`d`) — e.g. `{date-1M:MMMM yyyy}` for a bill issued the month after the usage it covers |
+| `{year}`, `{month}` | From the document date |
+| `{statement}`, `{amount}` | The statement or invoice number and the amount read from the PDF. If the document has none, the command isn't run and the action fails, so a missing amount can never be passed on as blank or zero. |
+| `{vendorAccount}` | The account number read from the PDF (blank if none) |
+| `{account}`, `{kind}` | The account id, and `bill` / `invoice` / `statement` |
+
+The same details are in `SD_*` environment variables (`SD_PATH`, `SD_FILE_NAME`,
+`SD_DATE`, `SD_STATEMENT`, `SD_AMOUNT`, `SD_VENDOR_ACCOUNT`, `SD_ACCOUNT_ID`, …).
+A script that records documents somewhere should check for an existing record first and
+treat "already there" as success, so a retry never creates a duplicate.
 
 ## 6. Credentials
 

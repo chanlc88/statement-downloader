@@ -12,8 +12,9 @@ especially when a site needs you to sign in.
 - **Asks for help instead of bypassing protections**: when a site wants a code or a
   CAPTCHA, it notifies you, opens the site with your login filled in, and carries on
   as soon as you're done.
-- **Optional actions** on each new document: record it as an expense in
-  [ezpropmgr](docs/functional-spec.md#53-actions), call a webhook, or run a script.
+- **Optional actions** on each new document: call a webhook, or
+  [run your own script](docs/functional-spec.md#53-actions) — for example one that
+  records the bill in your accounting system.
 
 > Status: early. Two site recipes so far (DeKalb County water, SCANA Energy gas — both
 > Georgia), verified against the live sites. See [docs/](docs/) for the spec, architecture and recipe format.

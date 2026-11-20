@@ -37,7 +37,7 @@ public sealed class AppServices : IDisposable
         var links = new UiLinks($"http://localhost:{config.Ui.Port}");
 
         var sites = SiteRegistry.All(paths.SitesDir, loggers.CreateLogger("Sites")).ToDictionary(s => s.SiteId, StringComparer.OrdinalIgnoreCase);
-        var actions = new IDocumentAction[] { new EzpropmgrExpenseAction(Http), new WebhookAction(Http), new RunCommandAction() }
+        var actions = new IDocumentAction[] { new WebhookAction(Http), new RunCommandAction() }
             .ToDictionary(a => a.Type, StringComparer.OrdinalIgnoreCase);
 
         var documents = new JsonDocumentStore(paths);

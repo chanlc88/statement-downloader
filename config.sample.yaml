@@ -64,19 +64,14 @@ accounts:
     schedule: auto                 # learn from bill dates; or { dayOfMonth: "15-22" } or { every: 7d }
     review: false
     actions:
-      # Record each bill as an expense in ezpropmgr (rtrack2025) and attach the PDF.
-      - type: ezpropmgr-expense
-        baseUrl: https://www.example.com
-        tokenSecret: bitwarden:00000000-0000-0000-0000-000000000000
-        buildingId: "1"
-        category: UTILITIES
-        paidTo: DeKalb County
-        description: "Water & Sewer Bill - 123 MAIN ST"   # tokens: {date:FORMAT} {statement} {kind}
-        # unitId / portfolioId / type / notes / attachAs (Receipt|Attachment1|Attachment2) are optional
-        referencePrefix: DKWTR-
+      # Run your own script for each new bill, e.g. to record it in your accounting system.
+      # Tokens: {path} {fileName} {date} {date:FORMAT} {date-1M:FORMAT} {statement} {amount}
+      # {vendorAccount} {account} — see docs/functional-spec.md. Details are also in SD_* variables.
+      - type: run-command
+        command: /usr/local/bin/record-bill
+        args: >-
+          --payee "DeKalb County" --amount {amount} --date {date} --reference "DKWTR-{statement}"
+          --description "Water - {date-1M:MMMM yyyy}" --pdf "{path}"
       # Or tell another system about it:
       # - type: webhook
       #   url: https://example.com/hooks/statements
-      # Or run a script (path and details are passed as environment variables):
-      # - type: run-command
-      #   command: /usr/local/bin/my-script

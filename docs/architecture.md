@@ -21,8 +21,8 @@ executable also offers one-shot CLI commands.
           │             INotificationChannel                                     │
           └────────┬──────────────────┬───────────────────┬─────────────────────┘
                    ▼                  ▼                   ▼
-          .Sites (Playwright,  .Secrets (Bitwarden   .Actions (ezpropmgr,
-           PdfPig parsers)      SDK, OS keychain)     webhook, run-command)
+          .Sites (Playwright,  .Secrets (Bitwarden   .Actions (webhook,
+           PdfPig parsers)      SDK, OS keychain)     run-command)
 ```
 
 Core has no dependency on Playwright, Bitwarden or any OS API; everything external
@@ -36,7 +36,7 @@ code small.
 | `StatementDownloader.Core` | Domain model, config loading, scheduling, cycle learning, account runs, filing, auth state, notifications, JSON stores. | YamlDotNet |
 | `StatementDownloader.Sites` | A Playwright base class (profiles, downloads, assisted sign-in, diagnostics), the site-recipe engine that runs the YAML recipes in `sites/` (embedded at build), PDF text extraction, and any code-based sites. | Microsoft.Playwright, PdfPig, YamlDotNet |
 | `StatementDownloader.Secrets` | `ISecretProvider` for Bitwarden Secrets Manager and env vars; `ITokenStore` for Windows Credential Manager / macOS Keychain. | Bitwarden.Secrets.Sdk |
-| `StatementDownloader.Actions` | `IDocumentAction` implementations: `ezpropmgr-expense`, `webhook`, `run-command`. Notification channels (`ntfy`, `email`). | — |
+| `StatementDownloader.Actions` | `IDocumentAction` implementations: `webhook`, `run-command`. Notification channels (`ntfy`, `email`). | — |
 | `StatementDownloader.App` | Composition root: CLI parsing, hosted agent, minimal-API web UI, OS install. | ASP.NET Core |
 | `StatementDownloader.Tests` | Unit tests for core logic and parsers. | xUnit |
 
