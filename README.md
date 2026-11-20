@@ -15,9 +15,8 @@ especially when a site needs you to sign in.
 - **Optional actions** on each new document: record it as an expense in
   [ezpropmgr](docs/functional-spec.md#53-actions), call a webhook, or run a script.
 
-> Status: early. One site (DeKalb County, GA water) is implemented; its sign-in works
-> against the live form, but the pages after sign-in still need confirming on a first
-> assisted run. See [docs/](docs/) for the spec and architecture.
+> Status: early. One site (DeKalb County, GA water) is implemented and mapped against the
+> live site. See [docs/](docs/) for the spec and architecture.
 
 ## Quick start
 

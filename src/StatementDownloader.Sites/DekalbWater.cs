@@ -5,11 +5,22 @@ using StatementDownloader.Core;
 
 namespace StatementDownloader.Sites;
 
+/// <summary>One row of DeKalb's bill table: [View Bill, "Nov 18, 2026", "$73.21", due date].</summary>
+public sealed record BillListRow(DateOnly Date, decimal? Amount, string PdfPath)
+{
+    public static BillListRow? TryParse(IReadOnlyList<string> cells, string? onclick)
+    {
+        if (cells.Count < 3 || onclick is null) return null;
+        var url = Regex.Match(onclick, @"MM_openBrWindow\('([^']+)'");
+        if (!url.Success || ParseHelpers.Date(cells[1]) is not { } date) return null;
+        return new(date, ParseHelpers.Money(cells[2]), url.Groups[1].Value);
+    }
+}
+
 /// <summary>
 /// DeKalb County, GA water &amp; sewer (myaccount.dekalbcountyga.gov).
-/// The sign-in form is a plain username ("access code") and password with no CAPTCHA.
-/// The pages after sign-in haven't been mapped yet: document discovery below is a best-effort
-/// search for bill links and reports a layout problem (with diagnostics) if it finds none.
+/// Sign-in is a plain username ("access code") and password form with no CAPTCHA; once signed
+/// in the page shows a Logout link. Session cookies only, so every run signs in again.
 /// </summary>
 public sealed class DekalbWaterFetcher : PlaywrightSiteFetcher, IHasDocumentParser
 {
@@ -34,50 +45,49 @@ public sealed class DekalbWaterFetcher : PlaywrightSiteFetcher, IHasDocumentPars
         await page.Locator("#login_btn").ClickAsync();
     }
 
+    /// <summary>
+    /// Bills &amp; Payment → My Bills is a table (<c>#billTable</c>) inside <c>iframe#iframe-BILLINQ</c>:
+    /// [View Bill button, bill date "Nov 18, 2026", amount, due date]. The button's onclick is
+    /// <c>MM_openBrWindow('/app/eBillViewerServlet?key=…', …)</c>, which returns the PDF directly
+    /// with the session cookies. About two years of bills are listed, newest first.
+    /// </summary>
     protected override async Task<IReadOnlyList<FoundDocument>> DownloadNewDocumentsAsync(IPage page, IBrowserContext browser, SiteContext ctx, CancellationToken ct)
     {
-        // Go to the bill history / statements page if there's a link to one.
-        var nav = page.Locator("a").Filter(new LocatorFilterOptions { HasTextRegex = new Regex(@"bill(ing)? history|view (my )?bills?|statements?|past bills", RegexOptions.IgnoreCase) }).First;
-        if (await nav.CountAsync() > 0)
-        {
-            await nav.ClickAsync();
-            await SettleAsync(page);
-            if (ctx.Capture) await SaveDiagnosticsAsync(page, ctx, "capture-bill-list");
-        }
+        var billsTab = page.Locator("a[href='#tabs-BILLINQ']").First;
+        if (await billsTab.CountAsync() == 0) throw new SiteLayoutException("The Bills & Payment tab wasn't found after signing in.");
+        await billsTab.ClickAsync();
+
+        var rows = page.FrameLocator("#iframe-BILLINQ").Locator("#billTable tbody tr");
+        try { await rows.First.WaitForAsync(new LocatorWaitForOptions { Timeout = 45_000 }); }
+        catch (TimeoutException) { throw new SiteLayoutException("The bill list (Bills & Payment → My Bills) didn't load."); }
+        if (ctx.Capture) await SaveDiagnosticsAsync(page, ctx, "capture-bill-list");
 
         var known = ctx.Known.Where(k => k.StatementNumber is not null).Select(k => k.StatementNumber!).ToHashSet();
         var newest = ctx.Known.Count > 0 ? ctx.Known.Max(k => k.DocumentDate) : DateOnly.FromDateTime(DateTime.Today).AddDays(-400);
 
-        // Candidate links: anything that looks like a bill PDF, with a date in its row.
-        var candidates = new List<(DateOnly Date, string Href)>();
-        foreach (var link in await page.Locator("a[href]").AllAsync())
+        var candidates = new List<BillListRow>();
+        foreach (var row in await rows.AllAsync())
         {
-            var href = await link.GetAttributeAsync("href") ?? "";
-            var text = (await link.InnerTextAsync()).Trim();
-            if (!Regex.IsMatch(href + " " + text, @"pdf|bill|statement|view", RegexOptions.IgnoreCase)) continue;
-            var rowText = await link.EvaluateAsync<string>("a => (a.closest('tr, li, .row, div') || a).innerText");
-            if (ParseHelpers.Date(Regex.Match(rowText + " " + text, @"\d{1,2}/\d{1,2}/\d{2,4}").Value) is not { } date) continue;
-            if (date <= newest) continue;
-            candidates.Add((date, new Uri(new Uri(page.Url), href).ToString()));
+            var cells = await row.Locator("td").AllInnerTextsAsync();
+            var onclick = await row.Locator("a[onclick*='eBillViewerServlet']").First.GetAttributeAsync("onclick", new LocatorGetAttributeOptions { Timeout = 2000 }).ContinueWith(t => t.IsCompletedSuccessfully ? t.Result : null);
+            if (BillListRow.TryParse(cells, onclick) is { } parsed && parsed.Date > newest) candidates.Add(parsed);
         }
-
         if (candidates.Count == 0)
         {
-            var anyBillLinks = await page.Locator("a[href*='pdf' i], a:has-text('bill')").CountAsync();
-            if (anyBillLinks == 0) throw new SiteLayoutException("Couldn't find a list of bills after signing in. The site's pages need mapping; see the diagnostics screenshot.");
             ctx.Log.LogInformation("{Site}: no bills newer than {Newest}", SiteId, newest);
             return [];
         }
 
         var found = new List<FoundDocument>();
-        foreach (var (date, href) in candidates.DistinctBy(c => c.Href).OrderBy(c => c.Date))
+        foreach (var (date, _, relative) in candidates.OrderBy(c => c.Date))
         {
+            var href = new Uri(new Uri(StartUrl), relative).ToString();
             var path = await DownloadPdfAsync(browser, href, ctx.WorkDir, $"{date:yyyy-MM-dd}-{found.Count}.pdf");
             if (path is null) continue;
             var parsed = BillParser.Parse(PdfText.Extract(path));
             if (parsed is null)
             {
-                ctx.Log.LogWarning("{Site}: downloaded {Href} but couldn't read it as a water bill", SiteId, href);
+                ctx.Log.LogWarning("{Site}: the bill dated {Date} downloaded but couldn't be read as a water bill", SiteId, date);
                 continue;
             }
             if (parsed.StatementNumber is { } sn && known.Contains(sn)) { File.Delete(path); continue; }

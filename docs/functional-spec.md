@@ -295,7 +295,7 @@ All commands accept `--config <path>` and `--data <folder>` (use a separate data
 
 | Site id | Site | Notes |
 |---|---|---|
-| `dekalb-water` | DeKalb County, GA water & sewer (myaccount.dekalbcountyga.gov) | Username/password form, no CAPTCHA on the sign-in page. Post-sign-in steps to be confirmed during the first assisted run. |
+| `dekalb-water` | DeKalb County, GA water & sewer (myaccount.dekalbcountyga.gov) | Username/password form, no CAPTCHA. Bills come from Bills & Payment → My Bills (about two years listed); each PDF downloads directly. Session cookies only, so every run signs in. |
 
 Planned: Georgia Power, Republic Services.
 

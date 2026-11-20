@@ -162,3 +162,23 @@ public class EzpropmgrActionTests
         File.Delete(pdf);
     }
 }
+
+public class DekalbBillListTests
+{
+    [Fact]
+    public void Parses_bill_table_row()
+    {
+        var row = BillListRow.TryParse(["View Bill", "Dec 09, 2026", "$1,106.50", "Dec 30, 2026"],
+            "MM_openBrWindow('/app/eBillViewerServlet?key=abc123','bill','menubar=no,width=800')")!;
+        Assert.Equal(new DateOnly(2026, 12, 9), row.Date);
+        Assert.Equal(1106.50m, row.Amount);
+        Assert.Equal("/app/eBillViewerServlet?key=abc123", row.PdfPath);
+    }
+
+    [Theory]
+    [InlineData("View Bill|not a date|$1.00", "MM_openBrWindow('/x','b','c')")]
+    [InlineData("View Bill|Nov 18, 2026|$1.00", "somethingElse()")]
+    [InlineData("View Bill|Nov 18, 2026|$1.00", null)]
+    public void Rejects_unexpected_rows(string cells, string? onclick) =>
+        Assert.Null(BillListRow.TryParse(cells.Split('|'), onclick));
+}

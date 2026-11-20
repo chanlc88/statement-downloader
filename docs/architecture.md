@@ -172,8 +172,8 @@ interfaces so SQLite can replace them later.
 
 ## 10. Open questions
 
-1. DeKalb Water post-sign-in navigation (bill list, PDF links) — confirm on the first
-   assisted run using the saved diagnostics.
+1. ~~DeKalb Water post-sign-in navigation~~ — mapped: `#billTable` inside
+   `iframe#iframe-BILLINQ`, PDFs from `/app/eBillViewerServlet`.
 2. Cross-machine coordination when both a PC and a laptop run the agent — today each
    machine keeps its own state; server-side duplicate checks in actions prevent
    double-recording. A shared lock in the documents folder is a possible addition.

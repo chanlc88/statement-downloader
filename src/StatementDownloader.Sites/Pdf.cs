@@ -28,7 +28,7 @@ public interface IDocumentParser
 
 public static class ParseHelpers
 {
-    private static readonly string[] DateFormats = ["M/d/yy", "M/d/yyyy", "MM/dd/yy", "MM/dd/yyyy", "MMMM d, yyyy", "MMM d, yyyy", "yyyy-MM-dd"];
+    private static readonly string[] DateFormats = ["M/d/yy", "M/d/yyyy", "MM/dd/yy", "MM/dd/yyyy", "MMMM d, yyyy", "MMM d, yyyy", "MMM dd, yyyy", "yyyy-MM-dd"];
 
     public static DateOnly? Date(string? s) =>
         s is not null && DateOnly.TryParseExact(s.Trim(), DateFormats, CultureInfo.InvariantCulture, DateTimeStyles.None, out var d) ? d : null;
