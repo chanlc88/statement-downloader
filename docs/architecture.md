@@ -157,7 +157,7 @@ interfaces so SQLite can replace them later.
 
 | Concern | Windows | macOS |
 |---|---|---|
-| Start at sign-in | Task Scheduler task "At log on" running `serve` | `~/Library/LaunchAgents/…plist` with `RunAtLoad` |
+| Start at sign-in | Per-user Task Scheduler task "At log on" running `serve --hidden` (no admin needed; window hidden, log in `agent.log`) | `~/Library/LaunchAgents/…plist` with `RunAtLoad` |
 | Token store | Credential Manager (`CredReadW`/`CredWriteW`) | Keychain (`security` CLI) |
 | Data folder | `%LOCALAPPDATA%\statement-downloader` | `~/Library/Application Support/statement-downloader` |
 | Browser | Playwright Chromium (`playwright install chromium`) | same |

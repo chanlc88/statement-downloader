@@ -25,8 +25,23 @@ public static class Install
         var cmd = SelfCommand(args);
         if (OperatingSystem.IsWindows())
         {
-            var tr = string.Join(' ', cmd.Select(Quote));
-            return Run("schtasks", "/Create", "/TN", TaskName, "/TR", tr, "/SC", "ONLOGON", "/RL", "LIMITED", "/F");
+            // schtasks /SC ONLOGON needs admin; a task scoped to the current user doesn't.
+            // --hidden makes the agent hide its console window and log to a file.
+            static string Ps(string s) => "'" + s.Replace("'", "''") + "'";
+            var exe = cmd[0];
+            var exeArgs = string.Join(' ', cmd.Skip(1).Append("--hidden").Select(Quote));
+            var script = $"""
+                $u = "$env:USERDOMAIN\$env:USERNAME"
+                $a = New-ScheduledTaskAction -Execute {Ps(exe)} -Argument {Ps(exeArgs)} -WorkingDirectory {Ps(Path.GetDirectoryName(exe)!)}
+                $t = New-ScheduledTaskTrigger -AtLogOn -User $u
+                $s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 5) -StartWhenAvailable
+                $p = New-ScheduledTaskPrincipal -UserId $u -LogonType Interactive -RunLevel Limited
+                Register-ScheduledTask -TaskName {Ps(TaskName)} -Action $a -Trigger $t -Settings $s -Principal $p -Force | Out-Null
+                Start-ScheduledTask -TaskName {Ps(TaskName)}
+                """;
+            var code = Run("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script);
+            if (code == 0) Console.WriteLine($"Registered '{TaskName}' to start at sign-in, and started it.");
+            return code;
         }
         if (OperatingSystem.IsMacOS())
         {
@@ -59,7 +74,9 @@ public static class Install
 
     public static int Unregister()
     {
-        if (OperatingSystem.IsWindows()) return Run("schtasks", "/Delete", "/TN", TaskName, "/F");
+        if (OperatingSystem.IsWindows())
+            return Run("powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+                $"Stop-ScheduledTask -TaskName '{TaskName}' -ErrorAction SilentlyContinue; Unregister-ScheduledTask -TaskName '{TaskName}' -Confirm:$false");
         if (OperatingSystem.IsMacOS())
         {
             var code = Run("launchctl", "bootout", $"gui/{GetUid()}", PlistPath());
@@ -91,4 +108,23 @@ public static class Install
         p.WaitForExit();
         return p.ExitCode;
     }
+
+    /// <summary>Windows: hide this process's console window and send output to a log file.</summary>
+    public static void RunHidden(string logFile)
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var hwnd = GetConsoleWindow();
+        if (hwnd != IntPtr.Zero) ShowWindow(hwnd, 0); // SW_HIDE
+        Directory.CreateDirectory(Path.GetDirectoryName(logFile)!);
+        if (File.Exists(logFile) && new FileInfo(logFile).Length > 5_000_000) File.Move(logFile, logFile + ".old", overwrite: true);
+        var writer = new StreamWriter(new FileStream(logFile, FileMode.Append, FileAccess.Write, FileShare.ReadWrite)) { AutoFlush = true };
+        Console.SetOut(writer);
+        Console.SetError(writer);
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    private static extern IntPtr GetConsoleWindow();
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 }

@@ -8,7 +8,8 @@ const string Usage = """
 
     Usage: statement-downloader <command> [--config <path>] [--data <folder>]
 
-      serve                      Run the background agent and web UI (http://localhost:5187)
+      serve [--hidden]           Run the background agent and web UI (http://localhost:5187);
+                                 --hidden (Windows) hides the window and logs to agent.log
       tick                       Run whatever is due now, once
       check <account>            Full check now, regardless of schedule
       assist <account>           Assisted sign-in (opens a browser window), then a full check
@@ -93,6 +94,7 @@ try
     {
         case "serve":
             {
+                if (argList.Contains("--hidden")) Install.RunHidden(services.Paths.File("agent.log"));
                 var app = WebUi.Build(services, []);
                 Console.WriteLine($"Statement Downloader running at {services.Links.Dashboard}");
                 await app.RunAsync();
