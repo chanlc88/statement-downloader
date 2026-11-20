@@ -72,6 +72,10 @@ public sealed class AccountConfig
 {
     public string Id { get; set; } = "";
     public string? Name { get; set; }
+    /// <summary>One category the account is listed under, e.g. the business it belongs to.</summary>
+    public string? Group { get; set; }
+    /// <summary>Any number of labels for filtering across groups, e.g. utility, bank.</summary>
+    public List<string> Tags { get; set; } = [];
     public string Site { get; set; } = "";
     public DocumentKind Kind { get; set; } = DocumentKind.Bill;
     public string Credential { get; set; } = "";
@@ -147,6 +151,11 @@ public static class ConfigLoader
             .Build();
         var config = deserializer.Deserialize<AppConfig>(yaml) ?? new AppConfig();
         config.DocumentsRoot = ExpandHome(config.DocumentsRoot);
+        foreach (var account in config.Accounts)
+        {
+            account.Tags = ConfigEditor.NormalizeTags(account.Tags ?? []);
+            account.Group = string.IsNullOrWhiteSpace(account.Group) ? null : account.Group.Trim();
+        }
         Validate(config);
         return config;
     }

@@ -186,6 +186,8 @@ public static class WebUi
                         return Results.BadRequest(new { error = $"{account.DisplayName}: {problem}" });
                     if (folder != account.Folder) yaml = ConfigEditor.SetAccountValue(yaml, account.Id, "folder", folder);
                     if (fileName != account.FileName) yaml = ConfigEditor.SetAccountValue(yaml, account.Id, "fileName", fileName);
+                    if (a.Group is { } group && group.Trim() != (account.Group ?? "")) yaml = ConfigEditor.SetAccountGroup(yaml, account.Id, group);
+                    if (a.Tags is { } tags && !ConfigEditor.NormalizeTags(tags).SequenceEqual(account.Tags)) yaml = ConfigEditor.SetAccountTags(yaml, account.Id, tags);
                 }
 
                 AppConfig saved;
@@ -196,7 +198,7 @@ public static class WebUi
                 // Apply to the running agent.
                 s.Config.DocumentsRoot = saved.DocumentsRoot;
                 foreach (var a in s.Config.Accounts)
-                    if (saved.Accounts.FirstOrDefault(x => x.Id == a.Id) is { } n) { a.Folder = n.Folder; a.FileName = n.FileName; }
+                    if (saved.Accounts.FirstOrDefault(x => x.Id == a.Id) is { } n) { a.Folder = n.Folder; a.FileName = n.FileName; a.Group = n.Group; a.Tags = n.Tags; }
                 return Results.Ok(await SettingsView(s, ct));
             }
             catch (InvalidDataException ex) { return Results.BadRequest(new { error = ex.Message }); }
@@ -209,7 +211,7 @@ public static class WebUi
     private static readonly SemaphoreSlim SettingsLock = new(1, 1);
 
     public sealed record SettingsChange(string? DocumentsRoot, List<AccountLocationChange>? Accounts);
-    public sealed record AccountLocationChange(string Id, string? Folder, string? FileName);
+    public sealed record AccountLocationChange(string Id, string? Folder, string? FileName, string? Group = null, List<string>? Tags = null);
 
     private static async Task<object> SettingsView(AppServices s, CancellationToken ct)
     {
@@ -217,13 +219,15 @@ public static class WebUi
         foreach (var a in s.Config.Accounts)
         {
             var example = await ExamplePathAsync(s, a, s.Config.DocumentsRoot, a.Folder, a.FileName, ct);
-            accounts.Add(new { a.Id, name = a.DisplayName, a.Site, a.Folder, a.FileName, example, relative = Relative(s.Config.DocumentsRoot, example) });
+            accounts.Add(new { a.Id, name = a.DisplayName, a.Site, group = a.Group, tags = a.Tags, a.Folder, a.FileName, example, relative = Relative(s.Config.DocumentsRoot, example) });
         }
         return new
         {
             configFile = s.Paths.ConfigFile,
             documentsRoot = s.Config.DocumentsRoot,
             documentsRootExists = Directory.Exists(s.Config.DocumentsRoot),
+            groups = s.Config.Accounts.Select(a => a.Group).OfType<string>().Where(g => g.Length > 0).Distinct().Order(StringComparer.OrdinalIgnoreCase),
+            tags = s.Config.Accounts.SelectMany(a => a.Tags).Distinct().Order(StringComparer.OrdinalIgnoreCase),
             accounts,
         };
     }
@@ -266,6 +270,8 @@ public static class WebUi
         {
             a.Id,
             name = a.DisplayName,
+            group = a.Group,
+            tags = a.Tags,
             a.Site,
             kind = a.KindWord,
             a.Enabled,

@@ -67,8 +67,8 @@ See [`config.sample.yaml`](../config.sample.yaml) for the full annotated example
 
 ### 3.2 Changing where documents are saved
 
-The web UI's **Settings** page edits `documentsRoot` and each account's `folder` and
-`fileName`, showing where the latest document would be saved as you type. Saving
+The web UI's **Settings** page lists accounts by group (with a filter box) and edits
+`documentsRoot` and each account's `group`, `tags`, `folder` and `fileName`, showing where the latest document would be saved as you type. Saving
 rewrites only those lines of `config.yaml` (comments and layout are kept, the previous
 file is kept as `config.yaml.bak`), validates the result first, and applies it to the
 running agent without a restart. Documents already saved are not moved.
@@ -79,6 +79,8 @@ running agent without a restart. Documents already saved are not moved.
 |---|---|---|
 | `id` | yes | Short unique id, used in commands, URLs and notifications. |
 | `name` | no | Display name. Defaults to `id`. |
+| `group` | no | The section the account is listed under in the dashboard and Settings, e.g. the business it belongs to. Accounts without one are listed under "Other". |
+| `tags` | no | Labels for filtering across groups, e.g. `[utility, gas]`. Stored lower-case. The dashboard shows a chip per tag; selecting chips shows accounts with any of them. |
 | `site` | yes | Which site fetcher to use. `statement-downloader sites` lists them. |
 | `kind` | no | `bill` (default), `invoice` or `statement`. |
 | `credential` | yes | Secret reference for the login (see §6). |

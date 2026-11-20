@@ -21,7 +21,29 @@ public static class ConfigEditor
     }
 
     /// <summary>Sets a scalar <paramref name="key"/> (e.g. folder, fileName) on the account with <paramref name="accountId"/>.</summary>
-    public static string SetAccountValue(string yaml, string accountId, string key, string value)
+    public static string SetAccountValue(string yaml, string accountId, string key, string value) =>
+        SetAccountEntry(yaml, accountId, key, Quote(value));
+
+    /// <summary>Sets the account's group; an empty value removes it.</summary>
+    public static string SetAccountGroup(string yaml, string accountId, string? group) =>
+        SetAccountEntry(yaml, accountId, "group", string.IsNullOrWhiteSpace(group) ? null : Quote(group.Trim()));
+
+    /// <summary>Sets the account's tags as a one-line list; no tags removes the key.</summary>
+    public static string SetAccountTags(string yaml, string accountId, IEnumerable<string> tags)
+    {
+        var list = NormalizeTags(tags);
+        return SetAccountEntry(yaml, accountId, "tags", list.Count == 0 ? null : "[" + string.Join(", ", list.Select(Quote)) + "]");
+    }
+
+    /// <summary>Trimmed, lower-case, de-duplicated tags in the order given.</summary>
+    public static List<string> NormalizeTags(IEnumerable<string> tags) =>
+        tags.Select(t => t.Trim().ToLowerInvariant()).Where(t => t.Length > 0).Distinct().ToList();
+
+    /// <summary>
+    /// Replaces (or adds, or with null removes) one key of an account. The key's old value may span
+    /// several lines (a block list), and all of it is replaced. New keys go after <c>name</c>, else after <c>id</c>.
+    /// </summary>
+    private static string SetAccountEntry(string yaml, string accountId, string key, string? rawValue)
     {
         var lines = Split(yaml, out var nl);
         var start = lines.FindIndex(l => Regex.IsMatch(l, $@"^\s*-\s+id\s*:\s*[""']?{Regex.Escape(accountId)}[""']?\s*(#.*)?$"));
@@ -38,11 +60,45 @@ public static class ConfigEditor
             end++;
         }
 
-        var keyLine = new Regex($@"^\s{{{keyIndent}}}{Regex.Escape(key)}\s*:");
-        var newLine = new string(' ', keyIndent) + $"{key}: {Quote(value)}";
-        var at = lines.FindIndex(start + 1, end - start - 1, l => keyLine.IsMatch(l));
-        if (at >= 0) lines[at] = newLine + TrailingComment(lines[at]);
-        else lines.Insert(start + 1, newLine);
+        int Find(string k)
+        {
+            var re = new Regex($@"^ {{{keyIndent}}}{Regex.Escape(k)}\s*:");
+            return lines.FindIndex(start + 1, end - start - 1, l => re.IsMatch(l));
+        }
+        // Lines after a key line that belong to its value: deeper-indented lines, or "- item"
+        // lines at the key's own indent (a block list).
+        int SpanEnd(int at)
+        {
+            var i = at + 1;
+            while (i < end)
+            {
+                var l = lines[i];
+                var t = l.TrimStart();
+                var indent = l.Length - t.Length;
+                if (t.Length == 0 || indent > keyIndent || (indent == keyIndent && t.StartsWith("- "))) { i++; continue; }
+                break;
+            }
+            // Don't swallow trailing blank lines or comments that lead into the next key.
+            while (i > at + 1 && lines[i - 1].Trim() is "" or ['#', ..]) i--;
+            return i;
+        }
+
+        var newLine = rawValue is null ? null : new string(' ', keyIndent) + $"{key}: {rawValue}";
+        var existing = Find(key);
+        if (existing >= 0)
+        {
+            var spanEnd = SpanEnd(existing);
+            var comment = spanEnd == existing + 1 ? TrailingComment(lines[existing]) : "";
+            lines.RemoveRange(existing, spanEnd - existing);
+            if (newLine is not null) lines.Insert(existing, newLine + comment);
+        }
+        else if (newLine is not null)
+        {
+            var name = key == "name" ? -1 : Find("name");
+            var after = name >= 0 ? SpanEnd(name) : start + 1;
+            if (key == "tags" && Find("group") is var g and >= 0) after = SpanEnd(g);
+            lines.Insert(after, newLine);
+        }
         return string.Join(nl, lines);
     }
 

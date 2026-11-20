@@ -76,6 +76,43 @@ public class ConfigEditorTests
     }
 
     [Fact]
+    public void Adds_group_after_name_and_tags_after_group()
+    {
+        var edited = ConfigEditor.SetAccountGroup(Yaml, "water", "Dauntless Properties");
+        edited = ConfigEditor.SetAccountTags(edited, "water", ["Utility", " water ", "utility"]);
+        var water = ConfigEditor.Check(edited).Accounts.Single(a => a.Id == "water");
+        Assert.Equal("Dauntless Properties", water.Group);
+        Assert.Equal(["utility", "water"], water.Tags);
+        var lines = edited.Split('\n').Select(l => l.Trim()).ToList();
+        Assert.Equal(lines.IndexOf("name: Water") + 1, lines.IndexOf("group: \"Dauntless Properties\""));
+        Assert.Equal(lines.IndexOf("group: \"Dauntless Properties\"") + 1, lines.IndexOf("tags: [\"utility\", \"water\"]"));
+        // gas has no name: new keys go right after its id
+        var gas = ConfigEditor.SetAccountGroup(Yaml, "gas", "Personal");
+        Assert.Contains("  - id: gas\n    group: \"Personal\"", gas.Replace("\r\n", "\n"));
+    }
+
+    [Fact]
+    public void Replaces_a_block_list_and_removes_empty_values()
+    {
+        var block = Yaml.Replace("    name: Water\n", "    name: Water\n    group: Old\n    tags:\n      - a\n      - b\n    # where bills go\n", StringComparison.Ordinal)
+                        .Replace("    # where bills go\n    # where bills go\n", "    # where bills go\n");
+        Assert.Equal(["a", "b"], ConfigEditor.Check(block).Accounts[0].Tags);
+
+        var edited = ConfigEditor.SetAccountTags(block, "water", ["c"]);
+        Assert.Equal(["c"], ConfigEditor.Check(edited).Accounts[0].Tags);
+        Assert.DoesNotContain("- a", edited);
+        Assert.Contains("# where bills go", edited);
+
+        var cleared = ConfigEditor.SetAccountGroup(ConfigEditor.SetAccountTags(edited, "water", []), "water", "  ");
+        var water = ConfigEditor.Check(cleared).Accounts[0];
+        Assert.Null(water.Group);
+        Assert.Empty(water.Tags);
+        Assert.DoesNotContain("group:", cleared);
+        Assert.DoesNotContain("tags:", cleared);
+        Assert.Equal("Bills/Water/{year}", water.Folder);
+    }
+
+    [Fact]
     public void Unknown_account_is_an_error() =>
         Assert.Throws<InvalidDataException>(() => ConfigEditor.SetAccountValue(Yaml, "nope", "folder", "x"));
 
