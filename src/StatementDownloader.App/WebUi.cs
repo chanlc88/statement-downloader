@@ -1,0 +1,178 @@
+using System.Collections.Concurrent;
+using System.Reflection;
+using StatementDownloader.Core;
+
+namespace StatementDownloader.App;
+
+/// <summary>Tracks runs started from the UI so the dashboard can show "Checking…".</summary>
+public sealed class RunTracker
+{
+    public ConcurrentDictionary<string, (string Kind, DateTimeOffset Started)> Running { get; } = new(StringComparer.OrdinalIgnoreCase);
+    public ConcurrentDictionary<string, RunReport> LastReports { get; } = new(StringComparer.OrdinalIgnoreCase);
+}
+
+/// <summary>Hourly heartbeat inside <c>serve</c>.</summary>
+public sealed class TickService(AppServices services, ILogger<TickService> log) : BackgroundService
+{
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
+        using var timer = new PeriodicTimer(TimeSpan.FromHours(1));
+        do
+        {
+            try { await services.Ticks.TickAsync(stoppingToken); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { log.LogError(ex, "Tick failed"); }
+        } while (await timer.WaitForNextTickAsync(stoppingToken));
+    }
+}
+
+public static class WebUi
+{
+    public static WebApplication Build(AppServices services, string[] args)
+    {
+        var builder = WebApplication.CreateSlimBuilder(args);
+        builder.WebHost.UseUrls($"http://127.0.0.1:{services.Config.Ui.Port}");
+        builder.Services.AddSingleton(services);
+        builder.Services.AddSingleton(new RunTracker());
+        builder.Services.AddHostedService<TickService>();
+        builder.Services.ConfigureHttpJsonOptions(o =>
+        {
+            foreach (var c in JsonFile.Options.Converters) o.SerializerOptions.Converters.Add(c);
+            o.SerializerOptions.DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull;
+        });
+        builder.Logging.AddSimpleConsole(o => o.SingleLine = true);
+
+        var app = builder.Build();
+        var html = LoadIndex().Replace("__UI_KEY__", services.UiKey);
+
+        // Pages: one client-side app for every route.
+        foreach (var route in new[] { "/", "/accounts/{id}", "/review", "/issues" })
+            app.MapGet(route, () => Results.Content(html, "text/html; charset=utf-8"));
+
+        var api = app.MapGroup("/api");
+        api.MapGet("/status", async (AppServices s, RunTracker runs, CancellationToken ct) =>
+        {
+            var statuses = await s.Ticks.GetStatusAsync(ct);
+            return Results.Ok(new
+            {
+                machine = Environment.MachineName,
+                documentsRoot = s.Config.DocumentsRoot,
+                accounts = statuses.Select(st => AccountView(st, runs)),
+            });
+        });
+
+        api.MapGet("/accounts/{id}", async (string id, AppServices s, RunTracker runs, CancellationToken ct) =>
+        {
+            var st = (await s.Ticks.GetStatusAsync(ct)).FirstOrDefault(x => x.Account.Id == id);
+            if (st is null) return Results.NotFound();
+            var docs = await s.Documents.GetAsync(id, ct);
+            var events = await s.Auth.GetEventsAsync(id, ct);
+            return Results.Ok(new
+            {
+                account = AccountView(st, runs),
+                documents = docs.OrderByDescending(d => d.DocumentDate).Select(d => new { d.Id, date = d.DocumentDate, d.StatementNumber, d.Amount, d.Path, d.Imported, d.FirstSeenUtc, review = d.Review, actions = d.Actions }),
+                signIns = events.OrderByDescending(e => e.AtUtc).Take(50),
+            });
+        });
+
+        api.MapGet("/issues", async (AppServices s, CancellationToken ct) =>
+        {
+            var data = await s.Notify.ReadAsync(ct);
+            return Results.Ok(new
+            {
+                open = data.Issues.Where(i => i.IsOpen).OrderByDescending(i => i.Level).ThenBy(i => i.OpenedUtc),
+                resolved = data.Issues.Where(i => !i.IsOpen).OrderByDescending(i => i.ResolvedUtc).Take(30),
+                recent = data.Log.AsEnumerable().Reverse().Take(100),
+                held = data.Held,
+            });
+        });
+
+        api.MapGet("/review", async (AppServices s, CancellationToken ct) =>
+            Results.Ok((await s.Documents.GetAsync(null, ct)).Where(d => d.Review == ReviewState.Pending)
+                .Select(d => new { d.Id, d.AccountId, account = s.Config.Accounts.FirstOrDefault(a => a.Id == d.AccountId)?.DisplayName, date = d.DocumentDate, d.StatementNumber, d.Amount, d.Path,
+                    actions = s.Config.Accounts.FirstOrDefault(a => a.Id == d.AccountId)?.Actions.Select(a => a.GetValueOrDefault("type")) })));
+
+        // State-changing endpoints need the per-install key (blocks cross-site requests).
+        var write = api.MapGroup("").AddEndpointFilter(async (ctx, next) =>
+            ctx.HttpContext.Request.Headers["X-SD-Key"] == services.UiKey ? await next(ctx) : Results.StatusCode(403));
+
+        write.MapPost("/accounts/{id}/check", (string id, AppServices s, RunTracker runs) => StartRun(s, runs, id, interactive: false));
+        write.MapPost("/accounts/{id}/assist", (string id, AppServices s, RunTracker runs) => StartRun(s, runs, id, interactive: true));
+        write.MapPost("/accounts/{id}/import-history", async (string id, AppServices s, CancellationToken ct) =>
+        {
+            var (added, skipped) = await HistoryImport.RunAsync(s, s.Account(id), ct);
+            return Results.Ok(new { added, skipped });
+        });
+
+        write.MapPost("/review/{docId}/{decision}", async (string docId, string decision, AppServices s, CancellationToken ct) =>
+        {
+            var doc = (await s.Documents.GetAsync(null, ct)).FirstOrDefault(d => d.Id == docId);
+            if (doc is null || doc.Review != ReviewState.Pending) return Results.NotFound();
+            var account = s.Account(doc.AccountId);
+            if (decision == "reject")
+            {
+                doc.Review = ReviewState.Rejected;
+                await s.Documents.UpdateAsync(doc, ct);
+                return Results.Ok(new { failed = 0 });
+            }
+            if (decision != "approve") return Results.BadRequest();
+            doc.Review = ReviewState.Approved;
+            await s.Documents.UpdateAsync(doc, ct);
+            var failed = await s.Actions.RunForDocumentAsync(account, doc, ct);
+            await s.Notify.SendDueAsync(ct);
+            return Results.Ok(new { failed });
+        });
+
+        write.MapPost("/issues/{key}/dismiss", async (string key, AppServices s, CancellationToken ct) =>
+        {
+            await s.Notify.ResolveAsync(key, null, ct);
+            return Results.Ok();
+        });
+
+        return app;
+    }
+
+    private static IResult StartRun(AppServices s, RunTracker runs, string id, bool interactive)
+    {
+        var account = s.Account(id);
+        if (!runs.Running.TryAdd(account.Id, (interactive ? "assist" : "check", DateTimeOffset.UtcNow)))
+            return Results.Conflict(new { message = "Already running." });
+        _ = Task.Run(async () =>
+        {
+            try { runs.LastReports[account.Id] = await s.Ticks.RunNowAsync(account, interactive); }
+            catch (Exception ex) { runs.LastReports[account.Id] = new RunReport(account.Id, AuthStatus.Unknown, 0, 0, "Failed: " + ex.Message); }
+            finally { runs.Running.TryRemove(account.Id, out _); }
+        });
+        return Results.Accepted(value: new { started = true });
+    }
+
+    private static object AccountView(AccountStatus st, RunTracker runs)
+    {
+        var a = st.Account;
+        return new
+        {
+            a.Id,
+            name = a.DisplayName,
+            a.Site,
+            kind = a.KindWord,
+            a.Enabled,
+            folder = a.Folder,
+            schedule = a.Schedule.Mode switch { ScheduleMode.Window => $"days {a.Schedule.DayOfMonth} of each month", ScheduleMode.Interval => $"every {a.Schedule.Every}", _ => "auto (learned)" },
+            auth = new { status = st.Auth.Status, reason = st.Auth.LastFailure, st.Auth.LastSuccessUtc, st.Auth.RememberedUntilUtc, explain = st.Auth.LastFailure == AuthFailureReason.None ? null : AuthTransitions.Explain(st.Auth.LastFailure).What },
+            estimate = st.Estimate,
+            decision = new { phase = st.Decision.Phase, run = st.Decision.Run, st.Decision.Reason },
+            lastDocument = st.LastDocument is { } d ? new { date = d.DocumentDate, d.Amount, d.StatementNumber } : null,
+            documentCount = st.DocumentCount,
+            issues = st.OpenIssues,
+            running = runs.Running.TryGetValue(a.Id, out var r) ? r.Kind : null,
+            lastRun = runs.LastReports.TryGetValue(a.Id, out var rep) ? rep.Summary : null,
+        };
+    }
+
+    private static string LoadIndex()
+    {
+        using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("index.html")
+            ?? throw new InvalidOperationException("UI resource missing.");
+        return new StreamReader(stream).ReadToEnd();
+    }
+}

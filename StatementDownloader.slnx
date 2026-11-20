@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/StatementDownloader.Actions/StatementDownloader.Actions.csproj" />
+    <Project Path="src/StatementDownloader.App/StatementDownloader.App.csproj" />
+    <Project Path="src/StatementDownloader.Core/StatementDownloader.Core.csproj" />
+    <Project Path="src/StatementDownloader.Secrets/StatementDownloader.Secrets.csproj" />
+    <Project Path="src/StatementDownloader.Sites/StatementDownloader.Sites.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/StatementDownloader.Tests/StatementDownloader.Tests.csproj" />
+  </Folder>
+</Solution>

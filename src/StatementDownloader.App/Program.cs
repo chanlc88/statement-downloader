@@ -1,0 +1,169 @@
+using StatementDownloader.App;
+using StatementDownloader.Core;
+using StatementDownloader.Secrets;
+using StatementDownloader.Sites;
+
+const string Usage = """
+    statement-downloader — download bills, invoices and statements from your accounts
+
+    Usage: statement-downloader <command> [--config <path>] [--data <folder>]
+
+      serve                      Run the background agent and web UI (http://localhost:5187)
+      tick                       Run whatever is due now, once
+      check <account>            Full check now, regardless of schedule
+      assist <account>           Assisted sign-in (opens a browser window), then a full check
+      status                     Accounts, sign-in states, next windows
+      history import <account|--all>
+                                 Seed history from files already in the account's folder
+      secrets set-token          Store the Bitwarden access token in the OS credential store
+      secrets test <reference>   Check that a secret reference resolves (prints no secret)
+      sites                      List supported sites
+      setup-browser              Download the Chromium build used for sign-ins
+      pdf-text <file>            Print a PDF's text as the parsers see it (for writing parsers)
+      install | uninstall        Start / stop starting the agent at sign-in
+      paths                      Show config and data locations
+    """;
+
+var argList = args.ToList();
+string? configPath = null;
+var ci = argList.IndexOf("--config");
+if (ci >= 0 && ci + 1 < argList.Count) { configPath = argList[ci + 1]; argList.RemoveRange(ci, 2); }
+string? dataPath = null;
+var di = argList.IndexOf("--data");
+if (di >= 0 && di + 1 < argList.Count) { dataPath = argList[di + 1]; argList.RemoveRange(di, 2); }
+var command = argList.FirstOrDefault() ?? "help";
+string Arg(int i) => argList.Count > i ? argList[i] : throw new ArgumentException($"Missing argument.\n\n{Usage}");
+
+var paths = AppPaths.Default(configPath is null ? null : Path.GetFullPath(configPath));
+if (dataPath is not null) paths = paths with { DataDir = Path.GetFullPath(dataPath) };
+
+try
+{
+    switch (command)
+    {
+        case "help" or "--help" or "-h":
+            Console.WriteLine(Usage);
+            return 0;
+
+        case "paths":
+            Console.WriteLine($"Config: {paths.ConfigFile}\nData:   {paths.DataDir}");
+            return 0;
+
+        case "sites":
+            foreach (var s in SiteRegistry.All()) Console.WriteLine($"{s.SiteId,-20} {s.DisplayName}");
+            return 0;
+
+        case "pdf-text":
+            Console.WriteLine(PdfText.Extract(Arg(1)));
+            return 0;
+
+        case "setup-browser":
+            return Microsoft.Playwright.Program.Main(["install", "chromium"]);
+
+        case "install":
+            return Install.Register(configPath);
+
+        case "uninstall":
+            return Install.Unregister();
+
+        case "secrets" when argList.ElementAtOrDefault(1) == "set-token":
+            {
+                var store = TokenStores.ForCurrentOs();
+                Console.Write("Paste the Bitwarden machine-account access token, then press Enter: ");
+                var token = ReadHidden();
+                if (string.IsNullOrWhiteSpace(token)) { Console.Error.WriteLine("No token entered."); return 1; }
+                store.Set(SecretProvider.BitwardenTokenName, token.Trim());
+                Console.WriteLine($"Saved in {store.Description}.");
+                return 0;
+            }
+    }
+
+    using var loggers = LoggerFactory.Create(b => b.AddSimpleConsole(o => o.SingleLine = true).SetMinimumLevel(LogLevel.Information));
+    using var services = AppServices.Build(paths, loggers);
+
+    switch (command)
+    {
+        case "serve":
+            {
+                var app = WebUi.Build(services, []);
+                Console.WriteLine($"Statement Downloader running at {services.Links.Dashboard}");
+                await app.RunAsync();
+                return 0;
+            }
+
+        case "tick":
+            foreach (var r in await services.Ticks.TickAsync()) Console.WriteLine($"{r.AccountId}: {r.Summary}");
+            return 0;
+
+        case "check" or "assist":
+            {
+                var account = services.Account(Arg(1));
+                if (command == "assist") Console.WriteLine("A browser window will open. Finish signing in there (code, CAPTCHA, \"remember me\"); this waits up to 10 minutes.");
+                var r = await services.Ticks.RunNowAsync(account, interactive: command == "assist");
+                Console.WriteLine($"{r.AccountId}: {r.Summary}");
+                return r.Auth is AuthStatus.Healthy or AuthStatus.ExpiringSoon ? 0 : 2;
+            }
+
+        case "status":
+            {
+                foreach (var st in await services.Ticks.GetStatusAsync())
+                {
+                    var window = st.Estimate is { } e ? $"{e.WindowStart:MM-dd}..{e.WindowEnd:MM-dd} (every ~{e.IntervalDays}d ±{e.SpreadDays})" : "learning";
+                    Console.WriteLine($"{st.Account.Id,-22} sign-in: {st.Auth.Status,-13} last: {st.LastDocument?.DocumentDate.ToString("yyyy-MM-dd") ?? "-",-10} window: {window}");
+                    Console.WriteLine($"{"",-22} now: {st.Decision.Phase} — {st.Decision.Reason}");
+                    foreach (var i in st.OpenIssues) Console.WriteLine($"{"",-22} ! {i.Title}");
+                }
+                return 0;
+            }
+
+        case "history" when argList.ElementAtOrDefault(1) == "import":
+            {
+                var target = Arg(2);
+                var accounts = target == "--all" ? services.Config.Accounts : [services.Account(target)];
+                foreach (var a in accounts)
+                {
+                    var (added, skipped) = await HistoryImport.RunAsync(services, a);
+                    Console.WriteLine($"{a.Id}: imported {added}, already known {skipped}");
+                }
+                return 0;
+            }
+
+        case "secrets" when argList.ElementAtOrDefault(1) == "test":
+            {
+                var reference = Arg(2);
+                try
+                {
+                    var c = await services.Secrets.GetCredentialAsync(reference);
+                    Console.WriteLine($"OK: login for user '{c.Username}' (password {c.Password.Length} characters).");
+                }
+                catch (InvalidDataException)
+                {
+                    var v = await services.Secrets.GetValueAsync(reference);
+                    Console.WriteLine($"OK: value of {v.Length} characters.");
+                }
+                return 0;
+            }
+
+        default:
+            Console.Error.WriteLine($"Unknown command '{command}'.\n\n{Usage}");
+            return 1;
+    }
+}
+catch (Exception ex) when (ex is FileNotFoundException or InvalidDataException or ArgumentException)
+{
+    Console.Error.WriteLine(ex.Message);
+    return 1;
+}
+
+static string ReadHidden()
+{
+    if (Console.IsInputRedirected) return Console.ReadLine() ?? "";
+    var sb = new System.Text.StringBuilder();
+    while (true)
+    {
+        var key = Console.ReadKey(intercept: true);
+        if (key.Key == ConsoleKey.Enter) { Console.WriteLine(); return sb.ToString(); }
+        if (key.Key == ConsoleKey.Backspace) { if (sb.Length > 0) sb.Length--; continue; }
+        if (!char.IsControl(key.KeyChar)) sb.Append(key.KeyChar);
+    }
+}

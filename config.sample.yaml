@@ -1,0 +1,79 @@
+# Statement Downloader — sample configuration
+#
+# Copy to:
+#   Windows: %APPDATA%\statement-downloader\config.yaml
+#   macOS:   ~/Library/Application Support/statement-downloader/config.yaml
+# or pass --config <path>.  Keep the real file out of version control.
+
+# Folder that every account's `folder` is relative to. Differs per machine.
+documentsRoot: "~/Documents/Statements"
+
+ui:
+  port: 5187
+
+secrets:
+  bitwarden:
+    apiUrl: https://api.bitwarden.com
+    identityUrl: https://identity.bitwarden.com
+  # The Bitwarden access token is NOT stored here. Set it once with:
+  #   statement-downloader secrets set-token
+
+schedule:            # defaults for every account
+  preflightDays: 3       # sign-in-only check this many days before a window opens
+  checksPerDay: 2        # full checks per day inside a window
+  overdueGraceDays: 7    # keep checking daily this long after the window closes
+  minSpreadDays: 2       # learned window is at least ±2 days ...
+  maxSpreadDays: 7       # ... and at most ±7 days
+  keepAliveDays: 0       # sign in every N days outside windows to keep sessions alive (0 = off)
+  expiryWarningDays: 5   # warn when a remembered sign-in lapses within N days
+  reminderHours: 24      # remind about open action-needed issues this often
+
+notifications:
+  channels:
+    - type: ntfy
+      name: phone
+      server: https://ntfy.sh
+      topic: replace-with-a-long-random-topic-name
+    - type: email
+      name: email
+      smtpHost: smtp.example.com
+      smtpPort: "587"
+      from: statements@example.com
+      to: you@example.com
+      username: you@example.com
+      passwordSecret: bitwarden:00000000-0000-0000-0000-000000000000
+  routes:
+    actionNeeded: [phone, email]
+    headsUp: [phone]
+    info: [email]
+  quietHours: "22:00-07:00"
+  digest: false          # true = collect info notifications into one daily email
+  digestHour: 18
+
+accounts:
+  - id: dekalb-water
+    name: DeKalb Water
+    site: dekalb-water
+    kind: bill
+    credential: bitwarden:00000000-0000-0000-0000-000000000000
+    folder: "Utilities/Water/{year}"
+    fileName: "{date:yyyy-MM-dd}-Dekalb-Water-Bill.pdf"
+    schedule: auto                 # learn from bill dates; or { dayOfMonth: "15-22" } or { every: 7d }
+    review: false
+    actions:
+      # Record each bill as an expense in ezpropmgr (rtrack2025) and attach the PDF.
+      - type: ezpropmgr-expense
+        baseUrl: https://www.example.com
+        tokenSecret: bitwarden:00000000-0000-0000-0000-000000000000
+        buildingId: "1"
+        category: UTILITIES
+        paidTo: DeKalb County
+        description: "Water & Sewer Bill - 123 MAIN ST"   # tokens: {date:FORMAT} {statement} {kind}
+        # unitId / portfolioId / type / notes / attachAs (Receipt|Attachment1|Attachment2) are optional
+        referencePrefix: DKWTR-
+      # Or tell another system about it:
+      # - type: webhook
+      #   url: https://example.com/hooks/statements
+      # Or run a script (path and details are passed as environment variables):
+      # - type: run-command
+      #   command: /usr/local/bin/my-script

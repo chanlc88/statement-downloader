@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <ProjectReference Include="..\StatementDownloader.Core\StatementDownloader.Core.csproj" />
+    <ProjectReference Include="..\StatementDownloader.Secrets\StatementDownloader.Secrets.csproj" />
+    <ProjectReference Include="..\StatementDownloader.Sites\StatementDownloader.Sites.csproj" />
+    <ProjectReference Include="..\StatementDownloader.Actions\StatementDownloader.Actions.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>statement-downloader</AssemblyName>
+    <RootNamespace>StatementDownloader.App</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="ui\index.html" LogicalName="index.html" />
+  </ItemGroup>
+
+</Project>
