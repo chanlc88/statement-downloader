@@ -115,16 +115,17 @@ public sealed class ScheduleConfig
 
 public static class Durations
 {
-    /// <summary>Parses "7d", "12h", "90m".</summary>
+    /// <summary>Parses "7d", "12h", "90m", "30s".</summary>
     public static TimeSpan Parse(string text)
     {
-        var m = Regex.Match(text.Trim(), @"^(\d+(?:\.\d+)?)\s*([dhm])$", RegexOptions.IgnoreCase);
-        if (!m.Success) throw new FormatException($"Duration must look like 7d, 12h or 90m (got \"{text}\").");
+        var m = Regex.Match(text.Trim(), @"^(\d+(?:\.\d+)?)\s*([dhms])$", RegexOptions.IgnoreCase);
+        if (!m.Success) throw new FormatException($"Duration must look like 7d, 12h, 90m or 30s (got \"{text}\").");
         var n = double.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture);
         return char.ToLowerInvariant(m.Groups[2].Value[0]) switch
         {
             'd' => TimeSpan.FromDays(n),
             'h' => TimeSpan.FromHours(n),
+            's' => TimeSpan.FromSeconds(n),
             _ => TimeSpan.FromMinutes(n),
         };
     }
@@ -241,5 +242,7 @@ public sealed record AppPaths(string ConfigFile, string DataDir)
     public string ProfileDir(string accountId) => Path.Combine(DataDir, "profiles", accountId);
     public string DiagnosticsDir(string accountId) => Path.Combine(DataDir, "diagnostics", accountId);
     public string WorkDir => Path.Combine(DataDir, "work");
+    /// <summary>Your own site recipes: a <c>sites</c> folder next to the config file.</summary>
+    public string SitesDir => Path.Combine(Path.GetDirectoryName(ConfigFile) ?? ".", "sites");
     public string File(string name) => Path.Combine(DataDir, name);
 }

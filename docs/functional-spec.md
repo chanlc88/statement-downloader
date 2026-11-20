@@ -39,7 +39,7 @@ manager; the app reads them only at the moment it signs in.
 
 | Term | Meaning |
 |---|---|
-| **Site** | A website the app knows how to sign in to and download from (e.g. `dekalb-water`). Each site is implemented in code as a *site fetcher*. |
+| **Site** | A website the app knows how to sign in to and download from (e.g. `dekalb-water`). Each site is described by a *site recipe* — a YAML file ([format](site-recipes.md)) — or, for unusual sites, implemented in code. You can add your own recipes without rebuilding the app. |
 | **Account** | One of *your* accounts on a site. One site can have several accounts (e.g. two Georgia Power accounts). Configured in your config file. |
 | **Document** | A downloaded bill, invoice or statement: a PDF plus what was read from it (document date, statement number, amount). |
 | **Kind** | `bill`, `invoice` or `statement` — used in file names and notification wording. |
@@ -282,11 +282,11 @@ A local web UI at `http://localhost:5187` (localhost only):
 | `statement-downloader status` | Print accounts, states, next windows. |
 | `statement-downloader history import <account>` | Seed history from files already in the account's folder. |
 | `statement-downloader secrets set-token` | Store the Bitwarden access token in the OS credential store. |
-| `statement-downloader sites` | List supported sites. |
+| `statement-downloader sites` | List supported sites (built-in and your own recipes) and where your recipes go. |
 | `statement-downloader install` / `uninstall` | Register / remove the agent at sign-in (Task Scheduler / LaunchAgent). |
 | `statement-downloader setup-browser` | Download the Chromium build Playwright uses. |
 | `statement-downloader secrets test <reference>` | Check a secret reference resolves (prints no secret). |
-| `statement-downloader pdf-text <file>` | Print a PDF's text as parsers see it (for writing new site parsers). |
+| `statement-downloader pdf-text <file>` | Print a PDF's text as recipes see it (for writing `parse` patterns). |
 | `statement-downloader paths` | Show the config and data locations. |
 
 All commands accept `--config <path>` and `--data <folder>` (use a separate data folder for testing).
@@ -297,7 +297,7 @@ All commands accept `--config <path>` and `--data <folder>` (use a separate data
 |---|---|---|
 | `dekalb-water` | DeKalb County, GA water & sewer (myaccount.dekalbcountyga.gov) | Username/password form, no CAPTCHA. Bills come from Bills & Payment → My Bills (about two years listed); each PDF downloads directly. Session cookies only, so every run signs in. |
 
-Planned: Georgia Power, Republic Services.
+Each is a recipe in [`sites/`](../sites/). Planned: Georgia Power, Republic Services.
 
 ## 12. Responsible use
 

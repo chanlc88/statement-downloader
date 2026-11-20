@@ -15,8 +15,8 @@ especially when a site needs you to sign in.
 - **Optional actions** on each new document: record it as an expense in
   [ezpropmgr](docs/functional-spec.md#53-actions), call a webhook, or run a script.
 
-> Status: early. One site (DeKalb County, GA water) is implemented and mapped against the
-> live site. See [docs/](docs/) for the spec and architecture.
+> Status: early. One site recipe so far (DeKalb County, GA water), verified against the live
+> site. See [docs/](docs/) for the spec, architecture and recipe format.
 
 ## Quick start
 
@@ -60,17 +60,19 @@ dotnet run --project src/StatementDownloader.App -- paths           # shows wher
 | `status` | Sign-in states and learned windows |
 | `history import <account\|--all>` | Seed history from existing files |
 | `secrets set-token [name]` / `secrets test <ref>` | Store the Bitwarden token (or any named token, used as `keychain:<name>`) / check a reference |
-| `sites` | Supported sites |
+| `sites` | Supported sites and where your own recipes go |
 | `install` / `uninstall` | Start the agent at sign-in |
 | `test-notify` | Send a test message to every notification channel |
 | `pdf-text <file>` | Show PDF text as parsers see it |
 
 ## Adding a site
 
-Derive from `PlaywrightSiteFetcher` (sign-in URL, selectors, signed-in check, how to list
-documents) and add an `IDocumentParser`; register it in `SiteRegistry`. Use
-`statement-downloader pdf-text` on a sample to write the parser, and add a test with
-synthetic text (never commit real bills). See [architecture](docs/architecture.md#9-extending).
+Most sites are a short YAML **site recipe**: sign-in selectors, the clicks to reach the
+list of bills, which columns hold the date and amount, and regexes to read the PDF. Put
+your own in a `sites` folder next to your config (no rebuild needed), or contribute one to
+[`sites/`](sites/) with a pull request so others don't have to map the same site again.
+See [docs/site-recipes.md](docs/site-recipes.md) and the
+[DeKalb recipe](sites/dekalb-water.yaml). Never commit real bills or account numbers.
 
 ## Responsible use
 

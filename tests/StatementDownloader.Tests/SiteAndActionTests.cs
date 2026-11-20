@@ -8,58 +8,6 @@ using StatementDownloader.Sites;
 
 namespace StatementDownloader.Tests;
 
-public class DekalbWaterParserTests
-{
-    // Synthetic text in the same order PdfPig extracts a real bill (numbers are made up).
-    private const string Sample =
-        "Usage = Gals x 100 Page 1 of 2 Account Number Statement Number 1234567890 98765432 Water & Sewer Bill for JANE DOE " +
-        "Service Address: 100 MAIN ST Bill Date: 11/18/26 Bill Summary Balance Forward Current Charges Total Amount Due " +
-        "$6.79 $73.21 $80.00 Due 12/09/26 Historical Usage Billing Details Previous Balance $106.50 Payment(s) Applied -$99.71 " +
-        "Balance Forward $6.79 Current Charges $73.21 Adjustments $0.00 Total Due On or Before 12/09/26 $80.00 " +
-        "Account Number 1234567890 Statement Number 98765432";
-
-    // Older layout where each label is followed by its own number.
-    private const string PairedSample =
-        "Account Number 1234567890 Page 1 of 2 Statement Number 98765432 Water & Sewer Bill for JANE DOE " +
-        "Bill Date: 11/18/26 Current Charges $73.21 Total Amount Due $80.00";
-
-    [Theory]
-    [InlineData(Sample)]
-    [InlineData(PairedSample)]
-    public void Reads_bill_fields(string text)
-    {
-        var p = new DekalbWaterBillParser().Parse(text)!;
-        Assert.Equal(new DateOnly(2026, 11, 18), p.DocumentDate);
-        Assert.Equal("98765432", p.StatementNumber);
-        Assert.Equal(73.21m, p.Amount);              // current charges, not total due
-        Assert.Equal("1234567890", p.AccountNumber);
-    }
-
-    [Fact]
-    public void Ignores_other_documents() => Assert.Null(new DekalbWaterBillParser().Parse("Georgia Power statement Bill Date: 11/18/26"));
-
-    /// <summary>
-    /// Optional check against real bills on this machine: set STATEMENT_DOWNLOADER_DEKALB_SAMPLES to a
-    /// folder of DeKalb bill PDFs named yyyy-MM-dd-*.pdf. Skipped (passes) when not set.
-    /// </summary>
-    [Fact]
-    public void Reads_real_bills_when_available()
-    {
-        var dir = Environment.GetEnvironmentVariable("STATEMENT_DOWNLOADER_DEKALB_SAMPLES");
-        if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) return;
-        var files = Directory.GetFiles(dir, "*Water-Bill*.pdf", SearchOption.AllDirectories);
-        Assert.NotEmpty(files);
-        var failures = new List<string>();
-        foreach (var f in files)
-        {
-            var p = new DekalbWaterBillParser().Parse(PdfText.Extract(f));
-            if (p?.StatementNumber is null || p.Amount is null || p.AccountNumber is null || p.StatementNumber == p.AccountNumber)
-                failures.Add($"{Path.GetFileName(f)}: {p}");
-        }
-        Assert.True(failures.Count == 0, $"{failures.Count} of {files.Length} not parsed:\n" + string.Join("\n", failures));
-    }
-}
-
 public class SecretParsingTests
 {
     [Fact]
@@ -161,24 +109,4 @@ public class EzpropmgrActionTests
         Assert.False(result.Succeeded);
         File.Delete(pdf);
     }
-}
-
-public class DekalbBillListTests
-{
-    [Fact]
-    public void Parses_bill_table_row()
-    {
-        var row = BillListRow.TryParse(["View Bill", "Dec 09, 2026", "$1,106.50", "Dec 30, 2026"],
-            "MM_openBrWindow('/app/eBillViewerServlet?key=abc123','bill','menubar=no,width=800')")!;
-        Assert.Equal(new DateOnly(2026, 12, 9), row.Date);
-        Assert.Equal(1106.50m, row.Amount);
-        Assert.Equal("/app/eBillViewerServlet?key=abc123", row.PdfPath);
-    }
-
-    [Theory]
-    [InlineData("View Bill|not a date|$1.00", "MM_openBrWindow('/x','b','c')")]
-    [InlineData("View Bill|Nov 18, 2026|$1.00", "somethingElse()")]
-    [InlineData("View Bill|Nov 18, 2026|$1.00", null)]
-    public void Rejects_unexpected_rows(string cells, string? onclick) =>
-        Assert.Null(BillListRow.TryParse(cells.Split('|'), onclick));
 }

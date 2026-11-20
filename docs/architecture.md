@@ -34,7 +34,7 @@ code small.
 | Project | Responsibility | Key dependencies |
 |---|---|---|
 | `StatementDownloader.Core` | Domain model, config loading, scheduling, cycle learning, account runs, filing, auth state, notifications, JSON stores. | YamlDotNet |
-| `StatementDownloader.Sites` | One `ISiteFetcher` per website, a Playwright base class (profiles, downloads, assisted sign-in, diagnostics), PDF text extraction and per-site parsers. | Microsoft.Playwright, PdfPig |
+| `StatementDownloader.Sites` | A Playwright base class (profiles, downloads, assisted sign-in, diagnostics), the site-recipe engine that runs the YAML recipes in `sites/` (embedded at build), PDF text extraction, and any code-based sites. | Microsoft.Playwright, PdfPig, YamlDotNet |
 | `StatementDownloader.Secrets` | `ISecretProvider` for Bitwarden Secrets Manager and env vars; `ITokenStore` for Windows Credential Manager / macOS Keychain. | Bitwarden.Secrets.Sdk |
 | `StatementDownloader.Actions` | `IDocumentAction` implementations: `ezpropmgr-expense`, `webhook`, `run-command`. Notification channels (`ntfy`, `email`). | — |
 | `StatementDownloader.App` | Composition root: CLI parsing, hosted agent, minimal-API web UI, OS install. | ASP.NET Core |
@@ -119,8 +119,17 @@ public interface ISiteFetcher
 - **Diagnostics**: on any failure, a screenshot and HTML snapshot to
   `dataDir/diagnostics/<account-id>/<timestamp>/`.
 
-Concrete sites override only: sign-in URL and selectors, the signed-in check, how
+Concrete sites supply only: sign-in URL and selectors, the signed-in check, how
 to list documents, and how to parse a downloaded PDF (`IDocumentParser`).
+
+**Site recipes.** Almost all sites supply those as data: a YAML recipe
+([format](site-recipes.md)) run by `RecipeSiteFetcher`, with `RecipeParser` reading
+the PDF and `RecipeRows` reading list rows (both pure functions, so each recipe's
+`tests:` samples run in the unit tests). `SiteRegistry.All(localDir)` builds the site
+list from code sites, then the built-in recipes (`sites/*.yaml`, embedded resources),
+then `*.yaml` in the `sites` folder next to the config file; a later entry with the
+same id replaces an earlier one. Recipes are never fetched at run time, because a
+recipe decides where credentials are typed.
 
 ## 6. Persistence
 
@@ -164,9 +173,9 @@ interfaces so SQLite can replace them later.
 
 ## 9. Extending
 
-- **New site**: add a class deriving from `PlaywrightSiteFetcher` (or implementing
-  `ISiteFetcher`) plus an `IDocumentParser`, register it in `SiteRegistry`, add a
-  parser test with a synthetic sample.
+- **New site**: write a recipe in `sites/` with synthetic `tests:` samples
+  ([how](site-recipes.md#writing-a-recipe)). Only when a recipe can't express the
+  site, derive from `PlaywrightSiteFetcher` and add it to `SiteRegistry.CodeSites`.
 - **New action**: implement `IDocumentAction` with a unique `Type` and register it.
 - **New notification channel**: implement `INotificationChannel`.
 

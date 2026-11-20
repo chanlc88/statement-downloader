@@ -36,7 +36,7 @@ public sealed class AppServices : IDisposable
         var secrets = new SecretProvider(config.Secrets.Bitwarden, paths, tokens);
         var links = new UiLinks($"http://localhost:{config.Ui.Port}");
 
-        var sites = SiteRegistry.All().ToDictionary(s => s.SiteId, StringComparer.OrdinalIgnoreCase);
+        var sites = SiteRegistry.All(paths.SitesDir, loggers.CreateLogger("Sites")).ToDictionary(s => s.SiteId, StringComparer.OrdinalIgnoreCase);
         var actions = new IDocumentAction[] { new EzpropmgrExpenseAction(Http), new WebhookAction(Http), new RunCommandAction() }
             .ToDictionary(a => a.Type, StringComparer.OrdinalIgnoreCase);
 

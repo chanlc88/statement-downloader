@@ -55,7 +55,14 @@ try
             return 0;
 
         case "sites":
-            foreach (var s in SiteRegistry.All()) Console.WriteLine($"{s.SiteId,-20} {s.DisplayName}");
+            foreach (var s in SiteRegistry.All(paths.SitesDir))
+            {
+                var r = (s as StatementDownloader.Sites.Recipes.RecipeSiteFetcher)?.Recipe;
+                var verified = r?.Verified is { } v ? $"verified {v}" : "";
+                Console.WriteLine($"{s.SiteId,-20} {s.DisplayName,-40} {verified,-20} {(r is null || r.Source == "built-in" ? "" : r.Source)}");
+            }
+            Console.WriteLine();
+            Console.WriteLine($"Your own recipes go in {paths.SitesDir} (see docs/site-recipes.md).");
             return 0;
 
         case "pdf-text":
