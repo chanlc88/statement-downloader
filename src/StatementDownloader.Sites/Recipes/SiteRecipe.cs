@@ -22,6 +22,11 @@ public sealed class SiteRecipe
     /// <summary>Date (yyyy-MM-dd) the recipe was last confirmed against the live site.</summary>
     public string? Verified { get; set; }
     public string? Notes { get; set; }
+    /// <summary>
+    /// Settings an account can give in its <c>siteOptions</c> (name → what it is), used in steps
+    /// as <c>{name}</c> — e.g. which billing account to open when one login has several.
+    /// </summary>
+    public Dictionary<string, string> Options { get; set; } = [];
     public SignInRecipe SignIn { get; set; } = new();
     public DocumentsRecipe Documents { get; set; } = new();
     public ParseRecipe Parse { get; set; } = new();
@@ -64,6 +69,8 @@ public sealed class StepRecipe
     public string? WaitFor { get; set; }
     /// <summary>Selector of the iframe the step's element is in.</summary>
     public string? Frame { get; set; }
+    /// <summary>Only run this step when the account sets this option.</summary>
+    public string? IfOption { get; set; }
     public string Timeout { get; set; } = "30s";
 }
 
@@ -149,6 +156,22 @@ public sealed class ExpectedRow
     public string Url { get; set; } = "";
 }
 
+/// <summary><c>{name}</c> placeholders in steps, filled from the account's <c>siteOptions</c>.</summary>
+public static class RecipeOptions
+{
+    private static readonly Regex Placeholder = new(@"\{([A-Za-z][A-Za-z0-9]*)\}");
+
+    public static IEnumerable<string> Names(params string?[] texts) =>
+        texts.Where(t => t is not null).SelectMany(t => Placeholder.Matches(t!).Select(m => m.Groups[1].Value)).Distinct();
+
+    /// <summary>Fills placeholders; throws naming the missing option so the config can be fixed.</summary>
+    public static string? Fill(string? text, IReadOnlyDictionary<string, string> values, string accountId) =>
+        text is null ? null : Placeholder.Replace(text, m =>
+            values.TryGetValue(m.Groups[1].Value, out var v) && !string.IsNullOrWhiteSpace(v)
+                ? v
+                : throw new InvalidDataException($"Account '{accountId}' needs siteOptions: {{ {m.Groups[1].Value}: ... }} for this site."));
+}
+
 public static class RecipeLoader
 {
     private static readonly IDeserializer Yaml = new DeserializerBuilder()
@@ -209,6 +232,9 @@ public static class RecipeLoader
             var actions = new[] { s.Click, s.Goto, s.WaitFor }.Count(x => !string.IsNullOrWhiteSpace(x));
             if (actions != 1) e.Add($"documents.steps[{i}] needs exactly one of click, goto or waitFor.");
             Duration(s.Timeout, $"documents.steps[{i}].timeout");
+            if (s.IfOption is { } io && !r.Options.ContainsKey(io)) e.Add($"documents.steps[{i}].ifOption '{io}' isn't listed under options.");
+            foreach (var name in RecipeOptions.Names(s.Click, s.Goto, s.WaitFor, s.Frame))
+                if (!r.Options.ContainsKey(name)) e.Add($"documents.steps[{i}] uses {{{name}}}, which isn't listed under options.");
         }
         Need(r.Documents.List.Rows, "documents.list.rows");
         Duration(r.Documents.List.Wait, "documents.list.wait");

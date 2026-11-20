@@ -162,7 +162,7 @@ never repeated, and failures are retried on the next run and reported.
 
 | Type | What it does |
 |---|---|
-| `ezpropmgr-expense` | Records the document as an expense in ezpropmgr (rtrack2025) via its API and attaches the PDF. Checks the server for an existing expense first (same reference, or same amount and date). |
+| `ezpropmgr-expense` | Records the document as an expense in ezpropmgr (rtrack2025) via its API and attaches the PDF. Checks the server for an existing expense first (same reference, or same amount and date). Settings: `baseUrl`, `tokenSecret`, `buildingId`/`unitId`/`portfolioId`, `category`, optional `type`, `subType`, `paidTo`, `description`, `notes`, `referencePrefix`. `description` and `notes` accept the file-name tokens plus `{fileName}`, `{vendorAccount}` (the account number read from the document) and shifted dates such as `{date-1M:MMMM yyyy}` — for bills issued the month after the usage they cover. |
 | `webhook` | POSTs the document details (JSON) to a URL. |
 | `run-command` | Runs a command with the document's path and details as arguments/environment variables. |
 
@@ -295,6 +295,7 @@ All commands accept `--config <path>` and `--data <folder>` (use a separate data
 
 | Site id | Site | Notes |
 |---|---|---|
+| `scana-energy` | SCANA Energy, GA natural gas (account.scanaenergy.com) | Email/password, no CAPTCHA. One login can hold several billing accounts (a new one may open each season); the active one is read unless `siteOptions.billingAccount` is set. PDFs download by clicking the invoice number. |
 | `dekalb-water` | DeKalb County, GA water & sewer (myaccount.dekalbcountyga.gov) | Username/password form, no CAPTCHA. Bills come from Bills & Payment → My Bills (about two years listed); each PDF downloads directly. Session cookies only, so every run signs in. |
 
 Each is a recipe in [`sites/`](../sites/). Planned: Georgia Power, Republic Services.

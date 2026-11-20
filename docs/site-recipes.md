@@ -61,6 +61,32 @@ tests:
       expect: { date: 2026-11-18, amount: 73.21, url: '/app/eBillViewerServlet?key=abc123' }
 ```
 
+## One login, several accounts
+
+Some sites show several accounts behind one login and a picker to switch between them.
+Declare an option and use it in steps that only run when it's set:
+
+```yaml
+options:
+  billingAccount: Billing account number to read (default the active one).
+documents:
+  steps:
+    - click: '[data-testid=billing-account-select] button'
+      ifOption: billingAccount
+    - click: "[role=option]:has-text('{billingAccount}')"
+      ifOption: billingAccount
+```
+
+and in the config, per account:
+
+```yaml
+  - id: gas-old-account
+    site: scana-energy
+    siteOptions: { billingAccount: "1234567" }
+```
+
+See [`sites/scana-energy.yaml`](../sites/scana-energy.yaml).
+
 ## Reference
 
 Selectors are [Playwright selectors](https://playwright.dev/docs/other-locators) — CSS plus
@@ -77,6 +103,7 @@ quotes'` so backslashes need no escaping.
 | `kind` | | `bill` (default), `statement` or `invoice`. |
 | `region`, `website`, `notes` | | For people reading the recipe. |
 | `verified` | built-in: yes | Date (`yyyy-MM-dd`) the recipe last worked against the live site. |
+| `options` | | Settings an account can give in its `siteOptions`, as `name: what it is`. Steps use them as `{name}`. |
 
 ### `signIn`
 
@@ -95,7 +122,7 @@ recognises them, notifies you and hands the browser to you (assisted sign-in).
 
 | Key | Default | Meaning |
 |---|---|---|
-| `steps` | none | Done in order after signing in to reach the list. Each step is one of `click: <selector>`, `goto: <url, may be relative>`, `waitFor: <selector>`, with optional `frame: <iframe selector>` and `timeout` (default `30s`). |
+| `steps` | none | Done in order after signing in to reach the list. Each step is one of `click: <selector>`, `goto: <url, may be relative>`, `waitFor: <selector>`, with optional `frame: <iframe selector>`, `timeout` (default `30s`) and `ifOption: <name>` (run only when the account sets that option). |
 | `list.rows` | required | One element per document, usually `table tbody tr`. |
 | `list.frame` | | The iframe the list is in. |
 | `list.wait` | `30s` | How long to wait for the first row. |
@@ -104,7 +131,7 @@ recognises them, notifies you and hands the browser to you (assisted sign-in).
 | `list.link.selector` | the row | Element in the row that leads to the PDF. |
 | `list.link.attribute` | `href` | Attribute holding the URL. |
 | `list.link.pattern` | | Regex to pull the URL out of the attribute (e.g. from an `onclick`). |
-| `download` | `fetch` | `fetch`: request the URL with the browser's cookies (fast, works for direct PDF links). `click`: click the link and save the file the browser downloads. |
+| `download` | `fetch` | `fetch`: request the URL with the browser's cookies (fast, works for direct PDF links). `click`: click the link and save the file the browser downloads — the link then needs no URL (script-driven buttons are fine). |
 | `firstRunLookback` | `400d` | With nothing on record yet, how far back to download. |
 
 A **field** (`date`, `amount`) is either `{ column: N }` — the Nth cell of the row,

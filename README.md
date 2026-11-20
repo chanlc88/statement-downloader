@@ -15,8 +15,8 @@ especially when a site needs you to sign in.
 - **Optional actions** on each new document: record it as an expense in
   [ezpropmgr](docs/functional-spec.md#53-actions), call a webhook, or run a script.
 
-> Status: early. One site recipe so far (DeKalb County, GA water), verified against the live
-> site. See [docs/](docs/) for the spec, architecture and recipe format.
+> Status: early. Two site recipes so far (DeKalb County water, SCANA Energy gas — both
+> Georgia), verified against the live sites. See [docs/](docs/) for the spec, architecture and recipe format.
 
 ## Quick start
 

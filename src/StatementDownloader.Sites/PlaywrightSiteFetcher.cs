@@ -25,6 +25,8 @@ public abstract class PlaywrightSiteFetcher : ISiteFetcher
     protected virtual IReadOnlyCollection<string>? SignInCookieNames => null;
 
     protected abstract Task<bool> IsSignedInAsync(IPage page, CancellationToken ct);
+    /// <summary>Waits until the page has rendered either the sign-in form or the signed-in page (script-built pages).</summary>
+    protected virtual Task WaitForPageReadyAsync(IPage page, CancellationToken ct) => Task.CompletedTask;
     /// <summary>True when a username/password form is showing.</summary>
     protected abstract Task<bool> HasSignInFormAsync(IPage page, CancellationToken ct);
     protected abstract Task SubmitSignInAsync(IPage page, SiteCredential credential, CancellationToken ct);
@@ -44,7 +46,10 @@ public abstract class PlaywrightSiteFetcher : ISiteFetcher
 
         try
         {
-            await page.GotoAsync(StartUrl, new PageGotoOptions { WaitUntil = WaitUntilState.NetworkIdle, Timeout = 60_000 });
+            // "Load", not "NetworkIdle": chat widgets and analytics keep many sites from ever going idle.
+            await page.GotoAsync(StartUrl, new PageGotoOptions { WaitUntil = WaitUntilState.Load, Timeout = 60_000 });
+            await SettleAsync(page);
+            await WaitForPageReadyAsync(page, ct);
         }
         catch (Exception ex) when (ex is PlaywrightException or TimeoutException)
         {
@@ -79,6 +84,7 @@ public abstract class PlaywrightSiteFetcher : ISiteFetcher
         {
             await SubmitSignInAsync(page, ctx.Credential, ct);
             await SettleAsync(page);
+            await WaitForSignedInAsync(page, TimeSpan.FromSeconds(20), ct);
             if (await IsSignedInAsync(page, ct)) return null;
         }
 
@@ -111,6 +117,18 @@ public abstract class PlaywrightSiteFetcher : ISiteFetcher
         return SiteResult.AuthFailed(AuthFailureReason.AssistAbandoned, $"Not signed in after {ctx.AssistTimeout.TotalMinutes:0} minutes.", await SaveDiagnosticsAsync(page, ctx, "assist-timeout"));
     }
 
+    /// <summary>Polls the signed-in check for a while (sites that redirect a few times after sign-in).</summary>
+    private async Task WaitForSignedInAsync(IPage page, TimeSpan max, CancellationToken ct)
+    {
+        var until = DateTime.UtcNow + max;
+        while (DateTime.UtcNow < until)
+        {
+            try { if (await IsSignedInAsync(page, ct)) return; }
+            catch (PlaywrightException) { /* navigating */ }
+            await Task.Delay(1000, ct);
+        }
+    }
+
     /// <summary>Works out why an unattended sign-in didn't succeed.</summary>
     protected virtual async Task<AuthFailureReason> ClassifyAsync(IPage page, CancellationToken ct)
     {
@@ -135,7 +153,7 @@ public abstract class PlaywrightSiteFetcher : ISiteFetcher
 
     protected static async Task SettleAsync(IPage page)
     {
-        try { await page.WaitForLoadStateAsync(LoadState.NetworkIdle, new PageWaitForLoadStateOptions { Timeout = 30_000 }); }
+        try { await page.WaitForLoadStateAsync(LoadState.NetworkIdle, new PageWaitForLoadStateOptions { Timeout = 10_000 }); }
         catch (TimeoutException) { }
     }
 

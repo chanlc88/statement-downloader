@@ -60,7 +60,8 @@ public class RecipeTests
         var sample = recipe.Tests.Rows[index];
         var list = recipe.Documents.List;
         var row = RecipeRows.Read(list, RecipeRows.Cell(list.Date, sample.Cells),
-            list.Amount is { } a ? RecipeRows.Cell(a, sample.Cells) : null, sample.Link, recipe.Parse.DateFormats);
+            list.Amount is { } a ? RecipeRows.Cell(a, sample.Cells) : null, sample.Link, recipe.Parse.DateFormats,
+            clickToDownload: recipe.Documents.Download == "click");
         Assert.NotNull(row);
         Assert.Equal(DateOnly.Parse(sample.Expect.Date), row.Date);
         Assert.Equal(sample.Expect.Amount, row.Amount);
@@ -94,6 +95,26 @@ public class RecipeTests
         var row = RecipeRows.Read(list, "Statement 01/05/2026 (PDF)", "Due: $12.00", "/s.pdf")!;
         Assert.Equal(new DateOnly(2026, 1, 5), row.Date);
         Assert.Equal(12m, row.Amount);
+    }
+
+    [Fact]
+    public void Step_options_fill_placeholders_and_must_be_declared()
+    {
+        Assert.Equal("[role=option]:has-text('42')", RecipeOptions.Fill("[role=option]:has-text('{billingAccount}')", new Dictionary<string, string> { ["billingAccount"] = "42" }, "acct"));
+        var missing = Assert.Throws<InvalidDataException>(() => RecipeOptions.Fill("{billingAccount}", new Dictionary<string, string>(), "acct"));
+        Assert.Contains("siteOptions", missing.Message);
+
+        var undeclared = MinimalRecipe("opt").Replace("documents:", "documents:\n  steps: [ { click: \"#a-{other}\" } ]");
+        var ex = Assert.Throws<InvalidDataException>(() => RecipeLoader.Parse(undeclared, "x.yaml"));
+        Assert.Contains("{other}", ex.Message);
+    }
+
+    [Fact]
+    public void Click_downloads_need_no_url()
+    {
+        var list = new ListRecipe { Rows = "tr", Date = new FieldRecipe { Column = 1 } };
+        Assert.NotNull(RecipeRows.Read(list, "11/4/2026", null, null, clickToDownload: true));
+        Assert.Null(RecipeRows.Read(list, "11/4/2026", null, null));
     }
 
     [Fact]

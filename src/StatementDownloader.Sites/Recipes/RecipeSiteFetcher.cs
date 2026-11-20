@@ -19,6 +19,12 @@ public sealed class RecipeSiteFetcher(SiteRecipe recipe) : PlaywrightSiteFetcher
     protected override async Task<bool> IsSignedInAsync(IPage page, CancellationToken ct) =>
         await page.Locator(S.SignedIn).CountAsync() > 0 && !await page.Locator(S.Password).First.IsVisibleAsync();
 
+    protected override async Task WaitForPageReadyAsync(IPage page, CancellationToken ct)
+    {
+        try { await page.Locator($"{S.SignedIn}, {S.Username}").First.WaitForAsync(new LocatorWaitForOptions { Timeout = 20_000 }); }
+        catch (TimeoutException) { /* classified after the sign-in attempt */ }
+    }
+
     protected override Task<bool> HasSignInFormAsync(IPage page, CancellationToken ct) =>
         page.Locator(S.Username).First.IsVisibleAsync();
 
@@ -37,8 +43,21 @@ public sealed class RecipeSiteFetcher(SiteRecipe recipe) : PlaywrightSiteFetcher
     protected override async Task<IReadOnlyList<FoundDocument>> DownloadNewDocumentsAsync(IPage page, IBrowserContext browser, SiteContext ctx, CancellationToken ct)
     {
         var d = recipe.Documents;
+        var options = ctx.Account.SiteOptions;
         foreach (var (step, i) in d.Steps.Select((s, i) => (s, i + 1)))
-            await RunStepAsync(page, step, i);
+        try
+        {
+            if (step.IfOption is { } io && (!options.TryGetValue(io, out var v) || string.IsNullOrWhiteSpace(v))) continue;
+            await RunStepAsync(page, new StepRecipe
+            {
+                Click = RecipeOptions.Fill(step.Click, options, ctx.Account.Id),
+                Goto = RecipeOptions.Fill(step.Goto, options, ctx.Account.Id),
+                WaitFor = RecipeOptions.Fill(step.WaitFor, options, ctx.Account.Id),
+                Frame = RecipeOptions.Fill(step.Frame, options, ctx.Account.Id),
+                Timeout = step.Timeout,
+            }, i);
+        }
+        catch (InvalidDataException ex) { throw new SiteLayoutException(ex.Message); }
 
         var list = d.List;
         var rows = In(page, list.Frame, list.Rows);
@@ -60,7 +79,8 @@ public sealed class RecipeSiteFetcher(SiteRecipe recipe) : PlaywrightSiteFetcher
                 await FieldTextAsync(row, list.Date, cells),
                 list.Amount is { } a ? await FieldTextAsync(row, a, cells) : null,
                 await Quietly(() => linkElement.GetAttributeAsync(list.Link.Attribute, new LocatorGetAttributeOptions { Timeout = 2000 })),
-                recipe.Parse.DateFormats);
+                recipe.Parse.DateFormats,
+                clickToDownload: d.Download == "click");
             if (listed is not null && listed.Date > newest) candidates.Add((listed, linkElement));
         }
         if (candidates.Count == 0)
@@ -108,7 +128,10 @@ public sealed class RecipeSiteFetcher(SiteRecipe recipe) : PlaywrightSiteFetcher
         try
         {
             if (step.Goto is { } url)
-                await page.GotoAsync(new Uri(new Uri(page.Url), url).ToString(), new PageGotoOptions { WaitUntil = WaitUntilState.NetworkIdle, Timeout = timeout });
+            {
+                await page.GotoAsync(new Uri(new Uri(page.Url), url).ToString(), new PageGotoOptions { WaitUntil = WaitUntilState.Load, Timeout = timeout });
+                await SettleAsync(page);
+            }
             else if (step.Click is { } click)
             {
                 await In(page, step.Frame, click).First.ClickAsync(new LocatorClickOptions { Timeout = timeout });

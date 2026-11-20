@@ -12,7 +12,9 @@ namespace StatementDownloader.Actions;
 /// <summary>
 /// Records a document as an expense in ezpropmgr (rtrack2025) and attaches the PDF.
 /// Settings: baseUrl, tokenSecret, one of buildingId/unitId/portfolioId, category, paidTo,
-/// description, referencePrefix; optional type, notes, attachAs (Receipt|Attachment1|Attachment2).
+/// description, referencePrefix; optional type, subType, notes, attachAs (Receipt|Attachment1|Attachment2).
+/// description and notes take the file-name tokens plus {fileName}, {vendorAccount} and
+/// shifted dates such as {date-1M:MMMM yyyy} (a bill issued in March for February's usage).
 /// </summary>
 public sealed class EzpropmgrExpenseAction(HttpClient http) : IDocumentAction
 {
@@ -57,6 +59,7 @@ public sealed class EzpropmgrExpenseAction(HttpClient http) : IDocumentAction
             ["entryDate"] = doc.DocumentDate.ToString("yyyy-MM-dd"),
             ["category"] = ctx.Require("category"),
             ["type"] = ctx.Optional("type"),
+            ["subType"] = ctx.Optional("subType"),
             ["expenseAmount"] = amount,
             ["buildingId"] = buildingId,
             ["unitId"] = unitId,
@@ -103,8 +106,19 @@ public sealed class EzpropmgrExpenseAction(HttpClient http) : IDocumentAction
         return ActionResult.Ok($"Recorded as ezpropmgr expense {expenseId} ({amount.ToString("C", CultureInfo.GetCultureInfo("en-US"))}), PDF attached{(reference is null ? "" : $", reference {reference}")}.");
     }
 
-    public static string Render(string template, AccountConfig account, DocumentRecord doc) =>
-        FileNameTemplate.Render(template, account, doc.DocumentDate, doc.StatementNumber).Replace("{fileName}", Path.GetFileName(doc.Path));
+    public static string Render(string template, AccountConfig account, DocumentRecord doc)
+    {
+        // {date-1M:FMT} / {date+7d:FMT}: the document date shifted by months or days.
+        var shifted = System.Text.RegularExpressions.Regex.Replace(template, @"\{date([+-]\d+)([Md]):([^}]+)\}", m =>
+        {
+            var n = int.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture);
+            var d = m.Groups[2].Value == "M" ? doc.DocumentDate.AddMonths(n) : doc.DocumentDate.AddDays(n);
+            return d.ToString(m.Groups[3].Value, CultureInfo.InvariantCulture);
+        });
+        return FileNameTemplate.Render(shifted, account, doc.DocumentDate, doc.StatementNumber)
+            .Replace("{fileName}", Path.GetFileName(doc.Path))
+            .Replace("{vendorAccount}", doc.VendorAccountNumber ?? "");
+    }
 
     private static HttpRequestMessage Request(HttpMethod method, string url, string token)
     {

@@ -33,6 +33,16 @@ public class SecretParsingTests
 
 public class EzpropmgrActionTests
 {
+    [Fact]
+    public void Description_can_use_shifted_dates_and_vendor_account()
+    {
+        var account = new AccountConfig { Id = "gas", Kind = DocumentKind.Bill };
+        var doc = new DocumentRecord { DocumentDate = new DateOnly(2026, 3, 10), StatementNumber = "111", VendorAccountNumber = "1234567", Path = "/x/2026-03-10-Gas.pdf" };
+        Assert.Equal("Natural Gas - February 2026", EzpropmgrExpenseAction.Render("Natural Gas - {date-1M:MMMM yyyy}", account, doc));
+        Assert.Equal("2026-03-17 | Invoice 111 | Billing account 1234567 | 2026-03-10-Gas.pdf",
+            EzpropmgrExpenseAction.Render("{date+7d:yyyy-MM-dd} | Invoice {statement} | Billing account {vendorAccount} | {fileName}", account, doc));
+    }
+
     private sealed class FakeSecrets : ISecretProvider
     {
         public Task<SiteCredential> GetCredentialAsync(string reference, CancellationToken ct = default) => throw new NotSupportedException();

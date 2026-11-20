@@ -1,0 +1,65 @@
+# SCANA Energy — Georgia natural gas (account.scanaenergy.com).
+# Format: docs/site-recipes.md. Regexes are written in 'single quotes' so backslashes stay as-is.
+id: scana-energy
+name: SCANA Energy (GA natural gas)
+kind: bill
+region: US-GA
+website: https://www.scanaenergy.com
+verified: 2026-11-20
+notes: >
+  Email + password sign-in, no CAPTCHA seen. One login can hold several billing accounts —
+  SCANA may open a new one when service restarts (for example each heating season). The
+  account summary opens on the active account, so most people need no options; set
+  billingAccount to read an older one. Bills tab: [billing date, invoice-number link, due
+  date, billed amount]; clicking the invoice number downloads the PDF. The PDF is titled
+  with the usage month ("FEBRUARY BILL GENERATED ON 03/10/2026"), so descriptions usually
+  want {date-1M:MMMM yyyy}.
+
+options:
+  billingAccount: Billing account number to read, when the login has several (default the active one).
+
+signIn:
+  url: https://account.scanaenergy.com/
+  username: 'input[name=username]'
+  password: 'input[name=password]'
+  submit: "button:has-text('Sign in to My Account')"
+  signedIn: "a[href='/Logout']"
+
+documents:
+  steps:
+    - click: '[data-testid=billing-account-select] button'
+      ifOption: billingAccount
+    - click: "[role=option]:has-text('{billingAccount}')"
+      ifOption: billingAccount
+    - click: ":text-is('Bills')"
+    - waitFor: "a[data-testid^='billing-history-table-bill-invoice-number-link']"
+  list:
+    rows: 'table tbody tr'
+    date: { column: 1 }
+    amount: { column: 4 }
+    link: { selector: "a[data-testid^='billing-history-table-bill-invoice-number-link']" }
+  download: click
+
+parse:
+  require: 'scanaenergy'
+  date: 'BILL GENERATED ON (\d{1,2}/\d{1,2}/\d{4})'
+  statementNumber: 'INVOICE NUMBER (\d{8,})'
+  accountNumber: 'BILLING ACCOUNT NUMBER (\d{5,})'
+  # Current Charges is this bill; Amount Due can include an unpaid previous bill.
+  amount: 'Current Charges \$\s*([\d,]+\.\d{2})'
+
+# Checked by the test suite. Made-up numbers only; text is in the order `pdf-text` prints it.
+tests:
+  documents:
+    - text: >-
+        CUSTOMER SERVICE 1.877.467.2262 customersupport@scanaenergy.com GAS LEAK EMERGENCIES (AGL) 1.877.427.4321
+        BILLING ACCOUNT NUMBER 1234567 ATLANTA GAS LIGHT ACCOUNT NUMBER 9876543210 FEBRUARY BILL GENERATED ON 03/10/2026
+        Usage History PERIOD USAGE AVG DAILY USAGE DAYS This Month 100.0 3.0 33 ACCOUNT SUMMARY Previous Bill Amount $67.89
+        Current Charges $123.45 Amount Due on 3/31/2026 $191.34 100 MAIN ST Atlanta, GA 30000 BILLING ACCOUNT NUMBER 1234567
+        INVOICE NUMBER 260000000000001 DATE DUE Mar 31 2026 AMOUNT DUE $191.34
+      expect: { date: 2026-03-10, statementNumber: '260000000000001', amount: 123.45, accountNumber: '1234567' }
+    - text: 'Georgia Power BILL GENERATED ON 03/10/2026 Current Charges $5.00'
+      expect: null
+  rows:
+    - cells: ['11/4/2026', '260000000000002', '11/25/2026', '$45.67']
+      expect: { date: 2026-11-04, amount: 45.67, url: '' }

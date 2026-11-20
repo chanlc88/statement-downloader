@@ -44,10 +44,14 @@ public static class RecipeRows
     /// Turns a row's raw values into a listed document: the date and amount texts (a cell or a
     /// selector's text) and the link element's attribute. Null when the row isn't a document.
     /// </summary>
-    public static ListedDocument? Read(ListRecipe list, string? dateText, string? amountText, string? linkAttribute, IReadOnlyList<string>? dateFormats = null)
+    /// <param name="clickToDownload">The link is clicked rather than fetched, so it needs no URL.</param>
+    public static ListedDocument? Read(ListRecipe list, string? dateText, string? amountText, string? linkAttribute, IReadOnlyList<string>? dateFormats = null, bool clickToDownload = false)
     {
         var date = Narrow(dateText, list.Date.Pattern) is { } ds ? ParseHelpers.Date(ds) ?? TryFormats(ds, dateFormats) : null;
-        if (date is null || string.IsNullOrWhiteSpace(linkAttribute)) return null;
+        if (date is null) return null;
+        if (clickToDownload)
+            return new ListedDocument(date.Value, list.Amount is { } a0 ? ParseHelpers.Money(Narrow(amountText, a0.Pattern)) : null, linkAttribute?.Trim() ?? "");
+        if (string.IsNullOrWhiteSpace(linkAttribute)) return null;
         var link = list.Link.Pattern is { } p
             ? Regex.Match(linkAttribute, p) is { Success: true } m ? m.Groups[1].Value : null
             : linkAttribute.Trim();
