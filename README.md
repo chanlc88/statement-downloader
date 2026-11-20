@@ -62,6 +62,7 @@ dotnet run --project src/StatementDownloader.App -- paths           # shows wher
 | `secrets set-token [name]` / `secrets test <ref>` | Store the Bitwarden token (or any named token, used as `keychain:<name>`) / check a reference |
 | `sites` | Supported sites |
 | `install` / `uninstall` | Start the agent at sign-in |
+| `test-notify` | Send a test message to every notification channel |
 | `pdf-text <file>` | Show PDF text as parsers see it |
 
 ## Adding a site

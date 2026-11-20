@@ -165,7 +165,8 @@ async function renderIssues() {
       <td>${esc((n.channels || []).join(", ") || "log only")}${n.error ? `<div class="s-broken">${esc(n.error)}</div>` : ""}</td></tr>`).join("")}</table>`
     : `<div class="empty">No notifications yet.</div>`;
   const held = d.held.length ? `<p class="muted">${d.held.length} notification(s) held for quiet hours or the daily summary.</p>` : "";
-  return `<h3 style="margin-top:0">Open</h3>${open}<h3>Recent notifications</h3>${held}${recent}`;
+  return `<h3 style="margin-top:0">Open</h3>${open}<h3>Recent notifications</h3>
+    <div class="actions" style="margin:0 0 12px"><button onclick="testNotify()">Send test notification</button></div>${held}${recent}`;
 }
 
 async function refreshBadges() {
@@ -196,6 +197,11 @@ async function run(id, kind) {
   setTimeout(render, 400);
 }
 async function review(id, decision) { try { await post(`/review/${id}/${decision}`); } catch (e) { alert(e.message); } render(); }
+async function testNotify() {
+  const r = await post("/notifications/test");
+  alert(r.length ? r.map(x => `${x.channel}: ${x.ok ? "sent" : x.error}`).join("
+") : "No notification channels are configured.");
+}
 async function dismiss(key) { await post(`/issues/${encodeURIComponent(key)}/dismiss`); render(); }
 async function importHistory(id) { const r = await post(`/accounts/${encodeURIComponent(id)}/import-history`); alert(`Imported ${r.added} document(s).`); render(); }
 

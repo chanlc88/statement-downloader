@@ -20,6 +20,7 @@ const string Usage = """
       secrets set-token [name]   Store a token in the OS credential store (default: the Bitwarden
                                  access token; any other name is usable as keychain:<name>)
       secrets test <reference>   Check that a secret reference resolves (prints no secret)
+      test-notify                Send a test message to every notification channel
       sites                      List supported sites
       setup-browser              Download the Chromium build used for sign-ins
       pdf-text <file>            Print a PDF's text as the parsers see it (for writing parsers)
@@ -99,6 +100,14 @@ try
                 Console.WriteLine($"Statement Downloader running at {services.Links.Dashboard}");
                 await app.RunAsync();
                 return 0;
+            }
+
+        case "test-notify":
+            {
+                var results = await services.Notify.SendTestAsync();
+                if (results.Count == 0) Console.WriteLine("No notification channels are configured.");
+                foreach (var (channel, error) in results) Console.WriteLine($"{channel}: {error ?? "sent"}");
+                return results.All(r => r.Error is null) ? 0 : 2;
             }
 
         case "tick":

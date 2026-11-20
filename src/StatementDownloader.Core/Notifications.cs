@@ -114,6 +114,24 @@ public sealed class NotificationCenter(
     public async Task<IReadOnlyList<Issue>> OpenIssuesAsync(CancellationToken ct = default) =>
         (await ReadAsync(ct)).Issues.Where(i => i.IsOpen).ToList();
 
+    /// <summary>Sends a test message to every channel now (ignores routes and quiet hours). Returns each channel's result.</summary>
+    public async Task<IReadOnlyList<(string Channel, string? Error)>> SendTestAsync(CancellationToken ct = default)
+    {
+        var n = new Notification
+        {
+            Level = NotificationLevel.Info,
+            Title = "Statement Downloader test",
+            Message = $"Notifications from {Environment.MachineName} are working.",
+        };
+        var results = new List<(string, string?)>();
+        foreach (var ch in _channels.Values)
+        {
+            try { await ch.SendAsync(n, ct); results.Add((ch.Name, null)); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { results.Add((ch.Name, ex.Message)); }
+        }
+        return results;
+    }
+
     public async Task NotifyAsync(Notification n, CancellationToken ct = default)
     {
         var now = clock.GetUtcNow();

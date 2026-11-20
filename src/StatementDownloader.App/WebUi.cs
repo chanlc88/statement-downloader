@@ -123,6 +123,9 @@ public static class WebUi
             return Results.Ok(new { failed });
         });
 
+        write.MapPost("/notifications/test", async (AppServices s, CancellationToken ct) =>
+            Results.Ok((await s.Notify.SendTestAsync(ct)).Select(r => new { channel = r.Channel, ok = r.Error is null, error = r.Error })));
+
         write.MapPost("/issues/{key}/dismiss", async (string key, AppServices s, CancellationToken ct) =>
         {
             await s.Notify.ResolveAsync(key, null, ct);
