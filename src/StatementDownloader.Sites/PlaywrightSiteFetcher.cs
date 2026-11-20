@@ -55,6 +55,7 @@ public abstract class PlaywrightSiteFetcher : ISiteFetcher
         if (signIn is not null) return signIn;
 
         var remembered = await RememberedUntilAsync(browser);
+        if (ctx.Capture) await SaveDiagnosticsAsync(page, ctx, "capture-signed-in");
         if (ctx.SignInOnly) return new SiteResult { SignedIn = true, RememberedUntilUtc = remembered };
 
         try

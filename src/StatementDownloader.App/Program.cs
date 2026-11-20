@@ -12,10 +12,12 @@ const string Usage = """
       tick                       Run whatever is due now, once
       check <account>            Full check now, regardless of schedule
       assist <account>           Assisted sign-in (opens a browser window), then a full check
+                                 add --capture to save each page visited (for mapping a site)
       status                     Accounts, sign-in states, next windows
       history import <account|--all>
                                  Seed history from files already in the account's folder
-      secrets set-token          Store the Bitwarden access token in the OS credential store
+      secrets set-token [name]   Store a token in the OS credential store (default: the Bitwarden
+                                 access token; any other name is usable as keychain:<name>)
       secrets test <reference>   Check that a secret reference resolves (prints no secret)
       sites                      List supported sites
       setup-browser              Download the Chromium build used for sign-ins
@@ -24,6 +26,7 @@ const string Usage = """
       paths                      Show config and data locations
     """;
 
+Console.OutputEncoding = System.Text.Encoding.UTF8;
 var argList = args.ToList();
 string? configPath = null;
 var ci = argList.IndexOf("--config");
@@ -69,11 +72,16 @@ try
         case "secrets" when argList.ElementAtOrDefault(1) == "set-token":
             {
                 var store = TokenStores.ForCurrentOs();
-                Console.Write("Paste the Bitwarden machine-account access token, then press Enter: ");
+                var name = argList.ElementAtOrDefault(2) ?? SecretProvider.BitwardenTokenName;
+                Console.Write(name == SecretProvider.BitwardenTokenName
+                    ? "Paste the Bitwarden machine-account access token, then press Enter: "
+                    : $"Paste the value for '{name}', then press Enter: ");
                 var token = ReadHidden();
                 if (string.IsNullOrWhiteSpace(token)) { Console.Error.WriteLine("No token entered."); return 1; }
-                store.Set(SecretProvider.BitwardenTokenName, token.Trim());
-                Console.WriteLine($"Saved in {store.Description}.");
+                store.Set(name, token.Trim());
+                Console.WriteLine(name == SecretProvider.BitwardenTokenName
+                    ? $"Saved in {store.Description}."
+                    : $"Saved in {store.Description}. Reference it as keychain:{name}.");
                 return 0;
             }
     }
@@ -99,7 +107,9 @@ try
             {
                 var account = services.Account(Arg(1));
                 if (command == "assist") Console.WriteLine("A browser window will open. Finish signing in there (code, CAPTCHA, \"remember me\"); this waits up to 10 minutes.");
-                var r = await services.Ticks.RunNowAsync(account, interactive: command == "assist");
+                var capture = argList.Contains("--capture");
+                var r = await services.Ticks.RunNowAsync(account, interactive: command == "assist", capture: capture);
+                if (capture) Console.WriteLine($"Page snapshots: {services.Paths.DiagnosticsDir(account.Id)}");
                 Console.WriteLine($"{r.AccountId}: {r.Summary}");
                 return r.Auth is AuthStatus.Healthy or AuthStatus.ExpiringSoon ? 0 : 2;
             }

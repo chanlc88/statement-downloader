@@ -57,10 +57,10 @@ dotnet run --project src/StatementDownloader.App -- paths           # shows wher
 |---|---|
 | `serve` | Background agent + web UI |
 | `tick` | Run whatever is due, once |
-| `check <account>` / `assist <account>` | Check now / assisted sign-in then check |
+| `check <account>` / `assist <account>` | Check now / assisted sign-in then check (`--capture` saves each page, for mapping a new site) |
 | `status` | Sign-in states and learned windows |
 | `history import <account\|--all>` | Seed history from existing files |
-| `secrets set-token` / `secrets test <ref>` | Bitwarden token setup / check |
+| `secrets set-token [name]` / `secrets test <ref>` | Store the Bitwarden token (or any named token, used as `keychain:<name>`) / check a reference |
 | `sites` | Supported sites |
 | `install` / `uninstall` | Start the agent at sign-in |
 | `pdf-text <file>` | Show PDF text as parsers see it |

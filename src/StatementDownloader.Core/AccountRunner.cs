@@ -32,7 +32,7 @@ public sealed class AccountRunner(
     public static string ExpiringIssueKey(string id) => $"expiring:{id}";
     public static string DocumentIssueKey(string id) => $"documents:{id}";
 
-    public async Task<RunReport> RunAsync(AccountConfig account, RunMode mode, bool interactive = false, CancellationToken ct = default)
+    public async Task<RunReport> RunAsync(AccountConfig account, RunMode mode, bool interactive = false, CancellationToken ct = default, bool capture = false)
     {
         var now = clock.GetUtcNow();
         var state = AuthTransitions.CheckExpiry(await auth.GetAsync(account.Id, ct), now, ExpiryWarning);
@@ -78,6 +78,7 @@ public sealed class AccountRunner(
                     Known = known,
                     SignInOnly = mode == RunMode.SignInOnly,
                     Interactive = interactive,
+                    Capture = capture,
                     Log = loggers.CreateLogger($"Site.{account.Site}"),
                 }, ct);
             }

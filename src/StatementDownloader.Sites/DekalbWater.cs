@@ -42,6 +42,7 @@ public sealed class DekalbWaterFetcher : PlaywrightSiteFetcher, IHasDocumentPars
         {
             await nav.ClickAsync();
             await SettleAsync(page);
+            if (ctx.Capture) await SaveDiagnosticsAsync(page, ctx, "capture-bill-list");
         }
 
         var known = ctx.Known.Where(k => k.StatementNumber is not null).Select(k => k.StatementNumber!).ToHashSet();

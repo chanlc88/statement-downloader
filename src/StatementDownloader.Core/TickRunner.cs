@@ -69,10 +69,10 @@ public sealed class TickRunner(
     }
 
     /// <summary>Runs one account now regardless of schedule (Check now / Sign in now).</summary>
-    public async Task<RunReport> RunNowAsync(AccountConfig account, bool interactive, CancellationToken ct = default)
+    public async Task<RunReport> RunNowAsync(AccountConfig account, bool interactive, CancellationToken ct = default, bool capture = false)
     {
         using var runLock = TryLock(wait: TimeSpan.FromMinutes(15)) ?? throw new InvalidOperationException("Another run is in progress; try again shortly.");
-        var report = await runner.RunAsync(account, RunMode.Full, interactive, ct);
+        var report = await runner.RunAsync(account, RunMode.Full, interactive, ct, capture);
         await notify.SendDueAsync(ct);
         return report;
     }
