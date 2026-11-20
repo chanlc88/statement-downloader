@@ -45,6 +45,15 @@
   .callout { background: var(--panel); border: 2px solid var(--accent); border-radius: 10px; padding: 16px 18px; margin-bottom: 18px; }
   .empty { padding: 28px; text-align: center; color: var(--muted); background: var(--panel); border: 1px dashed var(--line); border-radius: 10px; }
   code { font-size: 13px; }
+  label { display: block; font-weight: 600; font-size: 13.5px; margin: 12px 0 4px; }
+  input[type=text] { width: 100%; font: 14px ui-monospace, SFMono-Regular, Consolas, monospace; padding: 7px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--text); }
+  input[type=text]:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .hint { font-size: 13px; color: var(--muted); margin-top: 4px; }
+  .preview { font: 13px ui-monospace, SFMono-Regular, Consolas, monospace; background: var(--chip); border-radius: 7px; padding: 7px 10px; margin-top: 10px; word-break: break-all; }
+  .preview.bad { color: var(--bad); font-family: inherit; }
+  .stack { display: grid; gap: 16px; }
+  .savebar { position: sticky; bottom: 0; display: flex; align-items: center; gap: 12px; padding: 12px 0; background: var(--bg); }
+  .savebar button { white-space: nowrap; flex: none; }
   @media (max-width: 600px) { header { flex-wrap: wrap; gap: 8px; } .grid { grid-template-columns: 1fr; } th:nth-child(n+4), td:nth-child(n+4) { display: none; } }
 </style>
 </head>
@@ -55,6 +64,7 @@
     <a href="/" data-nav>Accounts</a>
     <a href="/review" data-nav>Review <span id="reviewBadge"></span></a>
     <a href="/issues" data-nav>Issues <span id="issueBadge"></span></a>
+    <a href="/settings" data-nav>Settings</a>
   </nav>
   <span class="muted" id="machine" style="margin-left:auto;font-size:13px"></span>
 </header>
@@ -169,6 +179,90 @@ async function renderIssues() {
     <div class="actions" style="margin:0 0 12px"><button onclick="testNotify()">Send test notification</button></div>${held}${recent}`;
 }
 
+const TOKENS_HELP = `Tokens: <code>{year}</code> <code>{month}</code> <code>{date:yyyy-MM-dd}</code> <code>{statement}</code> (statement or invoice number) <code>{account}</code> <code>{kind}</code>`;
+
+async function renderSettings() {
+  const d = await api("/settings");
+  const acct = a => `<div class="card" data-account="${esc(a.id)}">
+      <h2>${esc(a.name)}</h2>
+      <label for="folder-${esc(a.id)}">Folder <span class="muted" style="font-weight:400">— inside the base folder</span></label>
+      <input type="text" id="folder-${esc(a.id)}" data-field="folder" value="${esc(a.folder)}" data-original="${esc(a.folder)}" spellcheck="false">
+      <label for="file-${esc(a.id)}">File name</label>
+      <input type="text" id="file-${esc(a.id)}" data-field="fileName" value="${esc(a.fileName)}" data-original="${esc(a.fileName)}" spellcheck="false">
+      <div class="preview" data-preview>${esc(a.example)}</div>
+      <div class="hint">Where the latest document on record would be saved with these settings.</div>
+    </div>`;
+  return `<div class="stack">
+    <div class="card">
+      <h2>Base folder</h2>
+      <div class="muted">Every account's folder is inside this one. It can differ on each computer (for example your Google Drive folder on Windows and on a Mac).</div>
+      <label for="root">Base folder on this computer</label>
+      <input type="text" id="root" value="${esc(d.documentsRoot)}" data-original="${esc(d.documentsRoot)}" spellcheck="false">
+      ${d.documentsRootExists ? "" : `<div class="hint s-broken">This folder doesn't exist on this computer.</div>`}
+    </div>
+    <div class="muted" style="font-size:13.5px">${TOKENS_HELP}. Use <code>/</code> between folder levels. Changes only affect new documents; files already saved stay where they are.</div>
+    ${d.accounts.map(acct).join("")}
+    <div class="savebar">
+      <button class="primary" id="saveSettings" onclick="saveSettings()" disabled>Save changes</button>
+      <button id="resetSettings" onclick="render()" disabled>Undo</button>
+      <span id="saveStatus" class="muted"></span>
+    </div>
+    <div class="hint">Saved to <code>${esc(d.configFile)}</code>. Your comments are kept, and the previous version is kept as <code>config.yaml.bak</code>. Takes effect immediately.</div>
+  </div>`;
+}
+
+function settingsDirty() {
+  return [...document.querySelectorAll("main input[data-original]")].some(i => i.value !== i.dataset.original);
+}
+
+let previewTimer;
+function onSettingsInput() {
+  const dirty = settingsDirty();
+  $("#saveSettings").disabled = !dirty;
+  $("#resetSettings").disabled = !dirty;
+  $("#saveStatus").textContent = dirty ? "Unsaved changes" : "";
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(async () => {
+    const root = $("#root").value;
+    for (const card of document.querySelectorAll("[data-account]")) {
+      const q = new URLSearchParams({ account: card.dataset.account, root,
+        folder: card.querySelector("[data-field=folder]").value, fileName: card.querySelector("[data-field=fileName]").value });
+      const box = card.querySelector("[data-preview]");
+      try {
+        const r = await api("/settings/preview?" + q);
+        box.classList.toggle("bad", !!r.problem);
+        box.textContent = r.problem || r.path;
+      } catch (e) { box.classList.add("bad"); box.textContent = e.message; }
+    }
+  }, 250);
+}
+
+async function saveSettings() {
+  const root = $("#root");
+  const body = {
+    documentsRoot: root.value !== root.dataset.original ? root.value : null,
+    accounts: [...document.querySelectorAll("[data-account]")].map(card => ({
+      id: card.dataset.account,
+      folder: card.querySelector("[data-field=folder]").value,
+      fileName: card.querySelector("[data-field=fileName]").value,
+    })),
+  };
+  $("#saveSettings").disabled = true;
+  $("#saveStatus").textContent = "Saving…";
+  try {
+    await api("/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    await render();
+    $("#saveStatus").innerHTML = '<span class="s-healthy">Saved. New documents will go to the folders shown.</span>';
+  } catch (e) {
+    let msg = e.message; try { msg = JSON.parse(msg).error || msg; } catch { }
+    $("#saveStatus").innerHTML = `<span class="s-broken">${esc(msg)}</span>`;
+    $("#saveSettings").disabled = false;
+  }
+}
+
+document.addEventListener("input", e => { if (e.target.closest("main") && location.pathname === "/settings") onSettingsInput(); });
+window.addEventListener("beforeunload", e => { if (location.pathname === "/settings" && settingsDirty()) e.preventDefault(); });
+
 async function refreshBadges() {
   try {
     const [issues, review] = await Promise.all([api("/issues"), api("/review")]);
@@ -185,11 +279,12 @@ async function render() {
   document.querySelectorAll("nav a").forEach(a => a.classList.toggle("active", a.getAttribute("href") === p || (p.startsWith("/accounts") && a.getAttribute("href") === "/")));
   try {
     const html = p.startsWith("/accounts/") ? await renderAccount(decodeURIComponent(p.split("/")[2]), new URLSearchParams(location.search).has("assist"))
-      : p === "/review" ? await renderReview() : p === "/issues" ? await renderIssues() : await renderDashboard();
+      : p === "/review" ? await renderReview() : p === "/issues" ? await renderIssues() : p === "/settings" ? await renderSettings() : await renderDashboard();
     $("#main").innerHTML = html;
   } catch (e) { $("#main").innerHTML = `<div class="issue"><b>Couldn't load</b>${esc(e.message)}</div>`; }
   refreshBadges();
-  timer = setTimeout(render, document.querySelector("[disabled]") ? 3000 : 30000);
+  // The settings page isn't refreshed on a timer, so it never wipes what you're typing.
+  if (p !== "/settings") timer = setTimeout(render, document.querySelector("[disabled]") ? 3000 : 30000);
 }
 
 async function run(id, kind) {
@@ -208,6 +303,7 @@ document.addEventListener("click", e => {
   const a = e.target.closest("a[data-nav]");
   if (!a || e.metaKey || e.ctrlKey) return;
   e.preventDefault();
+  if (location.pathname === "/settings" && settingsDirty() && !confirm("Leave without saving your changes?")) return;
   history.pushState(null, "", a.getAttribute("href"));
   render();
 });

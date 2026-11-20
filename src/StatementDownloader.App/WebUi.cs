@@ -46,7 +46,7 @@ public static class WebUi
         var html = LoadIndex().Replace("__UI_KEY__", services.UiKey);
 
         // Pages: one client-side app for every route.
-        foreach (var route in new[] { "/", "/accounts/{id}", "/review", "/issues" })
+        foreach (var route in new[] { "/", "/accounts/{id}", "/review", "/issues", "/settings" })
             app.MapGet(route, () => Results.Content(html, "text/html; charset=utf-8"));
 
         var api = app.MapGroup("/api");
@@ -132,7 +132,89 @@ public static class WebUi
             return Results.Ok();
         });
 
+        // Settings: where documents are saved. Edits config.yaml in place (keeping comments) and
+        // applies the change to the running agent, so no restart is needed.
+        api.MapGet("/settings", async (AppServices s, CancellationToken ct) => Results.Ok(await SettingsView(s, ct)));
+
+        api.MapGet("/settings/preview", async (string account, string? folder, string? fileName, string? root, AppServices s, CancellationToken ct) =>
+        {
+            var a = s.Account(account);
+            folder ??= a.Folder; fileName ??= a.FileName; root = string.IsNullOrWhiteSpace(root) ? s.Config.DocumentsRoot : ConfigLoader.ExpandHome(root.Trim());
+            var problem = ConfigEditor.FolderProblem(folder) ?? ConfigEditor.FileNameProblem(fileName);
+            if (problem is not null) return Results.Ok(new { problem });
+            return Results.Ok(new { path = await ExamplePathAsync(s, a, root, folder, fileName, ct) });
+        });
+
+        write.MapPost("/settings", async (SettingsChange change, AppServices s, CancellationToken ct) =>
+        {
+            await SettingsLock.WaitAsync(ct);
+            try
+            {
+                var path = s.Paths.ConfigFile;
+                var yaml = await File.ReadAllTextAsync(path, ct);
+                var root = change.DocumentsRoot?.Trim();
+                if (root is not null)
+                {
+                    if (root.Length == 0) return Results.BadRequest(new { error = "The base folder is required." });
+                    yaml = ConfigEditor.SetDocumentsRoot(yaml, root.Replace('\\', '/'));
+                }
+                foreach (var a in change.Accounts ?? [])
+                {
+                    var account = s.Account(a.Id);
+                    var folder = (a.Folder ?? account.Folder).Trim().Replace('\\', '/').Trim('/');
+                    var fileName = (a.FileName ?? account.FileName).Trim();
+                    if ((ConfigEditor.FolderProblem(folder) ?? ConfigEditor.FileNameProblem(fileName)) is { } problem)
+                        return Results.BadRequest(new { error = $"{account.DisplayName}: {problem}" });
+                    if (folder != account.Folder) yaml = ConfigEditor.SetAccountValue(yaml, account.Id, "folder", folder);
+                    if (fileName != account.FileName) yaml = ConfigEditor.SetAccountValue(yaml, account.Id, "fileName", fileName);
+                }
+
+                AppConfig saved;
+                try { saved = ConfigEditor.Check(yaml); }
+                catch (Exception ex) when (ex is InvalidDataException or YamlDotNet.Core.YamlException) { return Results.BadRequest(new { error = ex.Message }); }
+                ConfigEditor.Save(path, yaml);
+
+                // Apply to the running agent.
+                s.Config.DocumentsRoot = saved.DocumentsRoot;
+                foreach (var a in s.Config.Accounts)
+                    if (saved.Accounts.FirstOrDefault(x => x.Id == a.Id) is { } n) { a.Folder = n.Folder; a.FileName = n.FileName; }
+                return Results.Ok(await SettingsView(s, ct));
+            }
+            catch (InvalidDataException ex) { return Results.BadRequest(new { error = ex.Message }); }
+            finally { SettingsLock.Release(); }
+        });
+
         return app;
+    }
+
+    private static readonly SemaphoreSlim SettingsLock = new(1, 1);
+
+    public sealed record SettingsChange(string? DocumentsRoot, List<AccountLocationChange>? Accounts);
+    public sealed record AccountLocationChange(string Id, string? Folder, string? FileName);
+
+    private static async Task<object> SettingsView(AppServices s, CancellationToken ct)
+    {
+        var accounts = new List<object>();
+        foreach (var a in s.Config.Accounts)
+            accounts.Add(new { a.Id, name = a.DisplayName, a.Folder, a.FileName, example = await ExamplePathAsync(s, a, s.Config.DocumentsRoot, a.Folder, a.FileName, ct) });
+        return new
+        {
+            configFile = s.Paths.ConfigFile,
+            documentsRoot = s.Config.DocumentsRoot,
+            documentsRootExists = Directory.Exists(s.Config.DocumentsRoot),
+            accounts,
+        };
+    }
+
+    /// <summary>Where the newest document on record would be saved with these settings (or a made-up one dated today).</summary>
+    private static async Task<string> ExamplePathAsync(AppServices s, AccountConfig a, string root, string folder, string fileName, CancellationToken ct)
+    {
+        var last = (await s.Documents.GetAsync(a.Id, ct)).OrderByDescending(d => d.DocumentDate).FirstOrDefault();
+        var date = last?.DocumentDate ?? DateOnly.FromDateTime(DateTime.Today);
+        var statement = last?.StatementNumber ?? "12345678";
+        return Path.GetFullPath(Path.Combine(root,
+            FileNameTemplate.Render(folder, a, date, statement),
+            FileNameTemplate.Render(fileName, a, date, statement)));
     }
 
     private static IResult StartRun(AppServices s, RunTracker runs, string id, bool interactive)

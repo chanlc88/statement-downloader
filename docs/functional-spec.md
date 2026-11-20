@@ -65,7 +65,15 @@ See [`config.sample.yaml`](../config.sample.yaml) for the full annotated example
   on macOS) so the same account list works on both.
 - `ui.port` — port for the local web UI (default 5187, bound to `localhost` only).
 
-### 3.2 Accounts
+### 3.2 Changing where documents are saved
+
+The web UI's **Settings** page edits `documentsRoot` and each account's `folder` and
+`fileName`, showing where the latest document would be saved as you type. Saving
+rewrites only those lines of `config.yaml` (comments and layout are kept, the previous
+file is kept as `config.yaml.bak`), validates the result first, and applies it to the
+running agent without a restart. Documents already saved are not moved.
+
+### 3.3 Accounts
 
 | Field | Required | Description |
 |---|---|---|
