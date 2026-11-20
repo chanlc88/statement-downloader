@@ -78,14 +78,14 @@ public class ConfigEditorTests
     [Fact]
     public void Adds_group_after_name_and_tags_after_group()
     {
-        var edited = ConfigEditor.SetAccountGroup(Yaml, "water", "Dauntless Properties");
+        var edited = ConfigEditor.SetAccountGroup(Yaml, "water", "Maple Street Rentals");
         edited = ConfigEditor.SetAccountTags(edited, "water", ["Utility", " water ", "utility"]);
         var water = ConfigEditor.Check(edited).Accounts.Single(a => a.Id == "water");
-        Assert.Equal("Dauntless Properties", water.Group);
+        Assert.Equal("Maple Street Rentals", water.Group);
         Assert.Equal(["utility", "water"], water.Tags);
         var lines = edited.Split('\n').Select(l => l.Trim()).ToList();
-        Assert.Equal(lines.IndexOf("name: Water") + 1, lines.IndexOf("group: \"Dauntless Properties\""));
-        Assert.Equal(lines.IndexOf("group: \"Dauntless Properties\"") + 1, lines.IndexOf("tags: [\"utility\", \"water\"]"));
+        Assert.Equal(lines.IndexOf("name: Water") + 1, lines.IndexOf("group: \"Maple Street Rentals\""));
+        Assert.Equal(lines.IndexOf("group: \"Maple Street Rentals\"") + 1, lines.IndexOf("tags: [\"utility\", \"water\"]"));
         // gas has no name: new keys go right after its id
         var gas = ConfigEditor.SetAccountGroup(Yaml, "gas", "Personal");
         Assert.Contains("  - id: gas\n    group: \"Personal\"", gas.Replace("\r\n", "\n"));
@@ -137,7 +137,7 @@ public class ConfigEditorTests
 
     [Theory]
     [InlineData("Bills/{year}", null)]
-    [InlineData("LLC - DAUNTLESS/WATER Bills/{year}/{month}", null)]
+    [InlineData("LLC - MAPLE/WATER Bills/{year}/{month}", null)]
     [InlineData("C:/Bills", "relative")]
     [InlineData("/Bills", "relative")]
     [InlineData("Bills/../Other", "..")]
