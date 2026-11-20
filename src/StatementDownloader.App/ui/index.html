@@ -51,9 +51,21 @@
   .hint { font-size: 13px; color: var(--muted); margin-top: 4px; }
   .preview { font: 13px ui-monospace, SFMono-Regular, Consolas, monospace; background: var(--chip); border-radius: 7px; padding: 7px 10px; margin-top: 10px; word-break: break-all; }
   .preview.bad { color: var(--bad); font-family: inherit; }
-  .stack { display: grid; gap: 16px; }
-  .savebar { position: sticky; bottom: 0; display: flex; align-items: center; gap: 12px; padding: 12px 0; background: var(--bg); }
-  .savebar button { white-space: nowrap; flex: none; }
+  .toolbar { display: flex; align-items: center; gap: 12px; margin: 18px 0 10px; }
+  .toolbar input[type=search] { flex: 1; max-width: 420px; font: inherit; padding: 7px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); color: var(--text); }
+  .list { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .lrow { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-top: 1px solid var(--line); }
+  .lrow:first-child { border-top: 0; }
+  .lrow .lmain { flex: 1; min-width: 0; }
+  .lrow .path { font: 12.5px ui-monospace, SFMono-Regular, Consolas, monospace; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lrow.editing { display: block; background: var(--chip); }
+  .lrow.editing .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
+  .lrow.saved { animation: flash 1.6s ease-out; }
+  @keyframes flash { from { background: color-mix(in srgb, var(--ok) 22%, transparent); } to { background: transparent; } }
+  .rowbtns { display: flex; gap: 8px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
+  .rowbtns button { white-space: nowrap; }
+  @media (max-width: 700px) { .lrow.editing .fields { grid-template-columns: 1fr; } }
+
   @media (max-width: 600px) { header { flex-wrap: wrap; gap: 8px; } .grid { grid-template-columns: 1fr; } th:nth-child(n+4), td:nth-child(n+4) { display: none; } }
 </style>
 </head>
@@ -179,88 +191,181 @@ async function renderIssues() {
     <div class="actions" style="margin:0 0 12px"><button onclick="testNotify()">Send test notification</button></div>${held}${recent}`;
 }
 
-const TOKENS_HELP = `Tokens: <code>{year}</code> <code>{month}</code> <code>{date:yyyy-MM-dd}</code> <code>{statement}</code> (statement or invoice number) <code>{account}</code> <code>{kind}</code>`;
+const TOKENS_HELP = `Tokens: <code>{year}</code> <code>{month}</code> <code>{date:yyyy-MM-dd}</code> <code>{statement}</code> (statement or invoice number) <code>{account}</code> <code>{kind}</code>. Use <code>/</code> between folder levels.`;
+let settingsData = null, editingId = null, editingRoot = false, settingsFilter = "";
 
 async function renderSettings() {
-  const d = await api("/settings");
-  const acct = a => `<div class="card" data-account="${esc(a.id)}">
-      <h2>${esc(a.name)}</h2>
-      <label for="folder-${esc(a.id)}">Folder <span class="muted" style="font-weight:400">— inside the base folder</span></label>
-      <input type="text" id="folder-${esc(a.id)}" data-field="folder" value="${esc(a.folder)}" data-original="${esc(a.folder)}" spellcheck="false">
-      <label for="file-${esc(a.id)}">File name</label>
-      <input type="text" id="file-${esc(a.id)}" data-field="fileName" value="${esc(a.fileName)}" data-original="${esc(a.fileName)}" spellcheck="false">
-      <div class="preview" data-preview>${esc(a.example)}</div>
-      <div class="hint">Where the latest document on record would be saved with these settings.</div>
-    </div>`;
-  return `<div class="stack">
-    <div class="card">
-      <h2>Base folder</h2>
-      <div class="muted">Every account's folder is inside this one. It can differ on each computer (for example your Google Drive folder on Windows and on a Mac).</div>
-      <label for="root">Base folder on this computer</label>
-      <input type="text" id="root" value="${esc(d.documentsRoot)}" data-original="${esc(d.documentsRoot)}" spellcheck="false">
-      ${d.documentsRootExists ? "" : `<div class="hint s-broken">This folder doesn't exist on this computer.</div>`}
+  settingsData = await api("/settings");
+  editingId = null; editingRoot = false;
+  const d = settingsData;
+  return `<div class="card" id="rootCard">${rootHtml()}</div>
+    <div class="toolbar">
+      <input type="search" id="acctFilter" placeholder="Filter by account, site or folder" value="${esc(settingsFilter)}" aria-label="Filter accounts">
+      <span class="muted" id="acctCount"></span>
     </div>
-    <div class="muted" style="font-size:13.5px">${TOKENS_HELP}. Use <code>/</code> between folder levels. Changes only affect new documents; files already saved stay where they are.</div>
-    ${d.accounts.map(acct).join("")}
-    <div class="savebar">
-      <button class="primary" id="saveSettings" onclick="saveSettings()" disabled>Save changes</button>
-      <button id="resetSettings" onclick="render()" disabled>Undo</button>
-      <span id="saveStatus" class="muted"></span>
+    <div class="list" id="acctList">${d.accounts.length ? d.accounts.map(a => `<div class="lrow" data-account="${esc(a.id)}">${rowHtml(a)}</div>`).join("") : `<div class="empty">No accounts configured.</div>`}</div>
+    <datalist id="folderSuggest"></datalist>
+    <p class="hint">${TOKENS_HELP} Changes only affect new documents; files already saved stay where they are.</p>
+    <p class="hint">Saved to <code>${esc(d.configFile)}</code>. Comments are kept, the previous version is kept as <code>config.yaml.bak</code>, and changes take effect immediately.</p>`;
+}
+
+function rootHtml() {
+  const d = settingsData;
+  if (!editingRoot) return `<div class="lrow" style="padding:0">
+      <div class="lmain"><b>Base folder</b> <span class="muted">— every account's folder is inside this one</span>
+        <div class="path" style="font-size:14px;color:var(--text)">${esc(d.documentsRoot)}</div>
+        ${d.documentsRootExists ? "" : `<div class="hint s-broken">This folder doesn't exist on this computer.</div>`}</div>
+      <button onclick="editRoot()">Change</button></div>`;
+  return `<b>Base folder</b>
+    <div class="muted">It can differ on each computer — for example your Google Drive folder on Windows and on a Mac.</div>
+    <label for="root">Base folder on this computer</label>
+    <input type="text" id="root" value="${esc(d.documentsRoot)}" data-original="${esc(d.documentsRoot)}" spellcheck="false">
+    <div class="rowbtns"><button class="primary" onclick="saveRoot()">Save</button><button onclick="cancelEdit()">Cancel</button><span class="msg"></span></div>`;
+}
+
+function rowHtml(a) {
+  return `<div class="lmain"><b>${esc(a.name)}</b> <span class="muted">${esc(a.site)}</span>
+      <div class="path" title="${esc(a.example)}">${esc(a.relative)}</div></div>
+    <button onclick="editAccount('${esc(a.id)}')">Edit</button>`;
+}
+
+function editorHtml(a) {
+  return `<b>${esc(a.name)}</b> <span class="muted">${esc(a.site)}</span>
+    <div class="fields">
+      <div><label for="f-folder">Folder <span class="muted" style="font-weight:400">— inside the base folder</span></label>
+        <input type="text" id="f-folder" data-field="folder" list="folderSuggest" value="${esc(a.folder)}" data-original="${esc(a.folder)}" spellcheck="false" autocomplete="off"></div>
+      <div><label for="f-file">File name</label>
+        <input type="text" id="f-file" data-field="fileName" value="${esc(a.fileName)}" data-original="${esc(a.fileName)}" spellcheck="false"></div>
     </div>
-    <div class="hint">Saved to <code>${esc(d.configFile)}</code>. Your comments are kept, and the previous version is kept as <code>config.yaml.bak</code>. Takes effect immediately.</div>
-  </div>`;
+    <div class="preview" data-preview title="${esc(a.example)}">${esc(a.relative)}</div>
+    <div class="rowbtns"><button class="primary" onclick="saveAccount()">Save</button><button onclick="cancelEdit()">Cancel</button>
+      <span class="muted">Example: where the latest document on record would be saved.</span><span class="msg"></span></div>`;
 }
 
 function settingsDirty() {
   return [...document.querySelectorAll("main input[data-original]")].some(i => i.value !== i.dataset.original);
 }
 
-let previewTimer;
-function onSettingsInput() {
-  const dirty = settingsDirty();
-  $("#saveSettings").disabled = !dirty;
-  $("#resetSettings").disabled = !dirty;
-  $("#saveStatus").textContent = dirty ? "Unsaved changes" : "";
-  clearTimeout(previewTimer);
-  previewTimer = setTimeout(async () => {
-    const root = $("#root").value;
-    for (const card of document.querySelectorAll("[data-account]")) {
-      const q = new URLSearchParams({ account: card.dataset.account, root,
-        folder: card.querySelector("[data-field=folder]").value, fileName: card.querySelector("[data-field=fileName]").value });
-      const box = card.querySelector("[data-preview]");
-      try {
-        const r = await api("/settings/preview?" + q);
-        box.classList.toggle("bad", !!r.problem);
-        box.textContent = r.problem || r.path;
-      } catch (e) { box.classList.add("bad"); box.textContent = e.message; }
-    }
-  }, 250);
+function confirmDiscard() { return !settingsDirty() || confirm("Discard your unsaved changes?"); }
+
+function closeEditors() {
+  if (editingId) {
+    const row = document.querySelector(`[data-account="${CSS.escape(editingId)}"]`);
+    const a = settingsData.accounts.find(x => x.id === editingId);
+    if (row && a) { row.classList.remove("editing"); row.innerHTML = rowHtml(a); }
+  }
+  if (editingRoot) { editingRoot = false; $("#rootCard").innerHTML = rootHtml(); }
+  editingId = null;
 }
 
-async function saveSettings() {
-  const root = $("#root");
-  const body = {
-    documentsRoot: root.value !== root.dataset.original ? root.value : null,
-    accounts: [...document.querySelectorAll("[data-account]")].map(card => ({
-      id: card.dataset.account,
-      folder: card.querySelector("[data-field=folder]").value,
-      fileName: card.querySelector("[data-field=fileName]").value,
-    })),
-  };
-  $("#saveSettings").disabled = true;
-  $("#saveStatus").textContent = "Saving…";
+function editAccount(id) {
+  if (!confirmDiscard()) return;
+  closeEditors();
+  editingId = id;
+  const row = document.querySelector(`[data-account="${CSS.escape(id)}"]`);
+  row.classList.add("editing");
+  row.innerHTML = editorHtml(settingsData.accounts.find(x => x.id === id));
+  const input = row.querySelector("#f-folder");
+  input.focus(); input.setSelectionRange(input.value.length, input.value.length);
+  suggestFolders(input.value);
+}
+
+function editRoot() {
+  if (!confirmDiscard()) return;
+  closeEditors();
+  editingRoot = true;
+  $("#rootCard").innerHTML = rootHtml();
+  $("#root").focus();
+}
+
+function cancelEdit() { if (confirmDiscard()) closeEditors(); }
+
+function setMsg(container, html) { const m = container.querySelector(".msg"); if (m) m.innerHTML = html; }
+
+async function postSettings(body) {
   try {
-    await api("/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    await render();
-    $("#saveStatus").innerHTML = '<span class="s-healthy">Saved. New documents will go to the folders shown.</span>';
-  } catch (e) {
-    let msg = e.message; try { msg = JSON.parse(msg).error || msg; } catch { }
-    $("#saveStatus").innerHTML = `<span class="s-broken">${esc(msg)}</span>`;
-    $("#saveSettings").disabled = false;
+    settingsData = await api("/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    return null;
+  } catch (e) { try { return JSON.parse(e.message).error || e.message; } catch { return e.message; } }
+}
+
+async function saveAccount() {
+  const row = document.querySelector(".lrow.editing");
+  const id = editingId;
+  const error = await postSettings({ accounts: [{ id, folder: $("#f-folder").value, fileName: $("#f-file").value }] });
+  if (error) return setMsg(row, `<span class="s-broken">${esc(error)}</span>`);
+  editingId = null;
+  row.classList.remove("editing");
+  row.innerHTML = rowHtml(settingsData.accounts.find(x => x.id === id));
+  row.classList.remove("saved"); void row.offsetWidth; row.classList.add("saved");
+}
+
+async function saveRoot() {
+  const error = await postSettings({ documentsRoot: $("#root").value });
+  if (error) return setMsg($("#rootCard"), `<span class="s-broken">${esc(error)}</span>`);
+  editingRoot = false;
+  $("#rootCard").innerHTML = rootHtml();
+  for (const a of settingsData.accounts) {
+    const row = document.querySelector(`[data-account="${CSS.escape(a.id)}"]`);
+    if (row && !row.classList.contains("editing")) row.innerHTML = rowHtml(a);
   }
 }
 
-document.addEventListener("input", e => { if (e.target.closest("main") && location.pathname === "/settings") onSettingsInput(); });
+function applyFilter() {
+  const rows = [...document.querySelectorAll("[data-account]")];
+  const q = settingsFilter.trim().toLowerCase();
+  let shown = 0;
+  for (const row of rows) {
+    const a = settingsData.accounts.find(x => x.id === row.dataset.account);
+    const hit = !q || row.classList.contains("editing") || [a.name, a.id, a.site, a.folder, a.fileName, a.relative].some(v => String(v).toLowerCase().includes(q));
+    row.style.display = hit ? "" : "none";
+    if (hit) shown++;
+  }
+  const c = $("#acctCount");
+  if (c) c.textContent = q ? `${shown} of ${rows.length} accounts` : `${rows.length} account${rows.length === 1 ? "" : "s"}`;
+}
+
+let previewTimer, folderTimer, folderParent = null;
+function onSettingsInput(e) {
+  if (e.target.id === "acctFilter") { settingsFilter = e.target.value; return applyFilter(); }
+  if (!editingId) return;
+  if (e.target.id === "f-folder") suggestFolders(e.target.value);
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(async () => {
+    const box = document.querySelector(".lrow.editing [data-preview]");
+    if (!box) return;
+    const q = new URLSearchParams({ account: editingId, folder: $("#f-folder").value, fileName: $("#f-file").value });
+    try {
+      const r = await api("/settings/preview?" + q);
+      box.classList.toggle("bad", !!r.problem);
+      box.textContent = r.problem || r.relative;
+      box.title = r.path || "";
+    } catch (err) { box.classList.add("bad"); box.textContent = err.message; }
+  }, 200);
+}
+
+// Suggest existing subfolders of whatever folder has been typed so far.
+function suggestFolders(value) {
+  const parent = value.includes("/") ? value.slice(0, value.lastIndexOf("/")) : "";
+  if (parent === folderParent || /[{}]/.test(parent)) return;
+  folderParent = parent;
+  clearTimeout(folderTimer);
+  folderTimer = setTimeout(async () => {
+    try {
+      const r = await api("/settings/folders?" + new URLSearchParams({ under: parent }));
+      const list = $("#folderSuggest");
+      if (list) list.innerHTML = r.folders.flatMap(f => [f, f + "/{year}"]).map(f => `<option value="${esc(f)}">`).join("");
+    } catch { }
+  }, 150);
+}
+
+document.addEventListener("input", e => { if (e.target.closest("main") && location.pathname === "/settings") onSettingsInput(e); });
+document.addEventListener("keydown", e => {
+  if (location.pathname !== "/settings") return;
+  if (e.key === "Escape" && (editingId || editingRoot)) cancelEdit();
+  if (e.key === "Enter" && e.target.matches(".lrow.editing input")) saveAccount();
+  if (e.key === "Enter" && e.target.id === "root") saveRoot();
+});
 window.addEventListener("beforeunload", e => { if (location.pathname === "/settings" && settingsDirty()) e.preventDefault(); });
 
 async function refreshBadges() {
@@ -281,6 +386,7 @@ async function render() {
     const html = p.startsWith("/accounts/") ? await renderAccount(decodeURIComponent(p.split("/")[2]), new URLSearchParams(location.search).has("assist"))
       : p === "/review" ? await renderReview() : p === "/issues" ? await renderIssues() : p === "/settings" ? await renderSettings() : await renderDashboard();
     $("#main").innerHTML = html;
+    if (p === "/settings") { folderParent = null; applyFilter(); }
   } catch (e) { $("#main").innerHTML = `<div class="issue"><b>Couldn't load</b>${esc(e.message)}</div>`; }
   refreshBadges();
   // The settings page isn't refreshed on a timer, so it never wipes what you're typing.

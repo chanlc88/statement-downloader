@@ -142,7 +142,26 @@ public static class WebUi
             folder ??= a.Folder; fileName ??= a.FileName; root = string.IsNullOrWhiteSpace(root) ? s.Config.DocumentsRoot : ConfigLoader.ExpandHome(root.Trim());
             var problem = ConfigEditor.FolderProblem(folder) ?? ConfigEditor.FileNameProblem(fileName);
             if (problem is not null) return Results.Ok(new { problem });
-            return Results.Ok(new { path = await ExamplePathAsync(s, a, root, folder, fileName, ct) });
+            var path = await ExamplePathAsync(s, a, root, folder, fileName, ct);
+            return Results.Ok(new { path, relative = Relative(root, path) });
+        });
+
+        // Existing subfolders of the base folder, for suggestions while typing a folder.
+        api.MapGet("/settings/folders", (string? under, AppServices s) =>
+        {
+            var rel = (under ?? "").Replace('\\', '/').Trim('/');
+            if (rel.Split('/').Any(p => p == "..") || Path.IsPathRooted(rel)) return Results.BadRequest();
+            var dir = Path.Combine(s.Config.DocumentsRoot, rel);
+            if (!Directory.Exists(dir)) return Results.Ok(new { folders = Array.Empty<string>() });
+            try
+            {
+                var folders = new DirectoryInfo(dir).EnumerateDirectories()
+                    .Where(d => !d.Name.StartsWith('.') && !d.Attributes.HasFlag(FileAttributes.Hidden))
+                    .Select(d => rel.Length == 0 ? d.Name : rel + "/" + d.Name)
+                    .Order(StringComparer.OrdinalIgnoreCase).Take(300).ToList();
+                return Results.Ok(new { folders });
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return Results.Ok(new { folders = Array.Empty<string>() }); }
         });
 
         write.MapPost("/settings", async (SettingsChange change, AppServices s, CancellationToken ct) =>
@@ -196,7 +215,10 @@ public static class WebUi
     {
         var accounts = new List<object>();
         foreach (var a in s.Config.Accounts)
-            accounts.Add(new { a.Id, name = a.DisplayName, a.Folder, a.FileName, example = await ExamplePathAsync(s, a, s.Config.DocumentsRoot, a.Folder, a.FileName, ct) });
+        {
+            var example = await ExamplePathAsync(s, a, s.Config.DocumentsRoot, a.Folder, a.FileName, ct);
+            accounts.Add(new { a.Id, name = a.DisplayName, a.Site, a.Folder, a.FileName, example, relative = Relative(s.Config.DocumentsRoot, example) });
+        }
         return new
         {
             configFile = s.Paths.ConfigFile,
@@ -204,6 +226,12 @@ public static class WebUi
             documentsRootExists = Directory.Exists(s.Config.DocumentsRoot),
             accounts,
         };
+    }
+
+    private static string Relative(string root, string path)
+    {
+        var r = Path.GetRelativePath(Path.GetFullPath(root), path);
+        return r.StartsWith("..", StringComparison.Ordinal) ? path : r.Replace('\\', '/');
     }
 
     /// <summary>Where the newest document on record would be saved with these settings (or a made-up one dated today).</summary>
