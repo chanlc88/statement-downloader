@@ -112,7 +112,7 @@ public static class WebUi
             try
             {
                 var failed = await s.Ticks.ReviewAsync(docId, decision == "approve", ct);
-                return failed is null ? Results.NotFound() : Results.Ok(new { failed });
+                return failed is null ? Results.Conflict(new { error = "This document was already approved or rejected." }) : Results.Ok(new { failed });
             }
             catch (InvalidOperationException ex) { return Results.Conflict(new { error = ex.Message }); }
         });
@@ -255,6 +255,9 @@ public static class WebUi
     private static IResult StartRun(AppServices s, RunTracker runs, string id, bool interactive)
     {
         var account = s.Account(id);
+        // Accounts on one login share a browser profile, and a run on one also runs the others.
+        if (Logins.Siblings(s.Config, account).Any(x => runs.Running.ContainsKey(x.Id)))
+            return Results.Conflict(new { message = "Another account on the same sign-in is running; try again when it's done." });
         if (!runs.Running.TryAdd(account.Id, (interactive ? "assist" : "check", DateTimeOffset.UtcNow)))
             return Results.Conflict(new { message = "Already running." });
         _ = Task.Run(async () =>

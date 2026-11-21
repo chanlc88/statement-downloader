@@ -108,6 +108,22 @@ async function api(path, opts = {}) {
   return r.status === 204 ? null : r.json().catch(() => null);
 }
 async function post(path) { return api(path, { method: "POST" }); }
+function errorText(e) { try { const j = JSON.parse(e.message); return j.error || j.message || e.message; } catch { return e.message; } }
+
+/**
+ * Runs a button's server call once at a time: the button and its neighbours are disabled and the
+ * button says what's happening until it's done; a failure is shown instead of being lost.
+ */
+async function working(btn, label, work) {
+  if (btn?.disabled) return;
+  const group = btn ? [...btn.parentElement.querySelectorAll("button")] : [];
+  const text = btn?.textContent;
+  group.forEach(b => b.disabled = true);
+  if (btn) btn.textContent = label;
+  try { return await work(); }
+  catch (e) { alert(errorText(e)); }
+  finally { if (btn?.isConnected) { group.forEach(b => b.disabled = false); btn.textContent = text; } }
+}
 
 const NO_GROUP = "Other";
 const store = {
@@ -125,15 +141,15 @@ function byGroup(items) {
 
 function issueHtml(i) {
   return `<div class="issue ${esc(i.level)}"><b>${esc(i.title)}</b>${esc(i.message)}
-    ${i.key ? `<div class="actions"><button onclick="dismiss('${esc(i.key)}')">Dismiss</button>${i.key.startsWith("auth:") ? `<span class="muted">It comes back the next time a sign-in is needed.</span>` : ""}</div>` : ""}</div>`;
+    ${i.key ? `<div class="actions"><button onclick="dismiss('${esc(i.key)}',this)">Dismiss</button>${i.key.startsWith("auth:") ? `<span class="muted">It comes back the next time a sign-in is needed.</span>` : ""}</div>` : ""}</div>`;
 }
 
 function accountButtons(a) {
   const busy = a.running ? "disabled" : "";
   const assistFirst = ["needs-assist", "unknown", "expiring-soon"].includes(a.auth.status);
   return `<div class="actions">
-    <button class="${assistFirst ? "primary" : ""}" ${busy} onclick="run('${a.id}','assist')">Sign in now</button>
-    <button class="${assistFirst ? "" : "primary"}" ${busy} onclick="run('${a.id}','check')">Check now</button>
+    <button class="${assistFirst ? "primary" : ""}" ${busy} onclick="run('${a.id}','assist',this)">Sign in now</button>
+    <button class="${assistFirst ? "" : "primary"}" ${busy} onclick="run('${a.id}','check',this)">Check now</button>
     ${a.running ? `<span class="muted">${a.running === "assist" ? "Waiting for you in the browser window…" : "Checking…"}</span>` : ""}
   </div>`;
 }
@@ -211,7 +227,7 @@ async function renderAccount(id, assist) {
       <td>${money(x.amount)}</td><td>${esc(x.statementNumber || "–")}</td>
       <td>${(x.actions || []).map(r => `<div class="${r.succeeded ? "s-healthy" : "s-broken"}">${esc(r.type)}: ${esc(r.summary)}</div>`).join("") || '<span class="muted">–</span>'}</td>
       <td><code>${esc(x.path.split(/[\\/]/).pop())}</code></td></tr>`).join("")}</table>`
-    : `<div class="empty">No ${esc(a.kind)}s on record. <button onclick="importHistory('${a.id}')">Import from folder</button></div>`;
+    : `<div class="empty">No ${esc(a.kind)}s on record. <button onclick="importHistory('${a.id}',this)">Import from folder</button></div>`;
   const signIns = d.signIns.length ? `<table><tr><th>When</th><th>Result</th><th>Helped</th><th>Remembered until</th><th>Machine</th></tr>
     ${d.signIns.map(e => `<tr><td>${when(e.atUtc)}</td><td class="${e.succeeded ? "s-healthy" : "s-broken"}">${e.succeeded ? "Signed in" : esc(e.reason)}${e.detail ? ` <span class="muted">${esc(e.detail)}</span>` : ""}</td>
       <td>${e.assisted ? "yes" : ""}</td><td>${when(e.rememberedUntilUtc)}</td><td>${esc(e.machine)}</td></tr>`).join("")}</table>`
@@ -236,7 +252,7 @@ async function renderReview() {
   return `<table><tr><th>Account</th><th>Date</th><th>Amount</th><th>Statement #</th><th>Will run</th><th></th></tr>
     ${items.map(x => `<tr><td>${esc(x.account)}</td><td>${day(x.date)}</td><td>${money(x.amount)}</td><td>${esc(x.statementNumber || "–")}</td>
       <td>${esc((x.actions || []).join(", "))}</td>
-      <td><button class="primary" onclick="review('${x.id}','approve')">Approve</button> <button onclick="review('${x.id}','reject')">Reject</button></td></tr>`).join("")}</table>`;
+      <td><button class="primary" onclick="review('${x.id}','approve',this)">Approve</button> <button onclick="review('${x.id}','reject',this)">Reject</button></td></tr>`).join("")}</table>`;
 }
 
 async function renderIssues() {
@@ -247,9 +263,9 @@ async function renderIssues() {
       <td>${esc((n.channels || []).join(", ") || "log only")}${n.error ? `<div class="s-broken">${esc(n.error)}</div>` : ""}</td></tr>`).join("")}</table>`
     : `<div class="empty">No notifications yet.</div>`;
   const held = d.held.length ? `<p class="muted">${d.held.length} notification(s) held for quiet hours or the daily summary.</p>` : "";
-  const dismissAll = d.open.length > 1 ? `<div class="actions" style="margin:0 0 12px"><button onclick="dismissAll()">Dismiss all</button></div>` : "";
+  const dismissAll = d.open.length > 1 ? `<div class="actions" style="margin:0 0 12px"><button onclick="dismissAll(this)">Dismiss all</button></div>` : "";
   return `<h3 style="margin-top:0">Open</h3>${dismissAll}${open}<h3>Recent notifications</h3>
-    <div class="actions" style="margin:0 0 12px"><button onclick="testNotify()">Send test notification</button>${d.recent.length ? `<button onclick="clearHistory()">Clear history</button>` : ""}</div>${held}${recent}`;
+    <div class="actions" style="margin:0 0 12px"><button onclick="testNotify(this)">Send test notification</button>${d.recent.length ? `<button onclick="clearHistory(this)">Clear history</button>` : ""}</div>${held}${recent}`;
 }
 
 const TOKENS_HELP = `Tokens: <code>{year}</code> <code>{month}</code> <code>{date:yyyy-MM-dd}</code> <code>{statement}</code> (statement or invoice number) <code>{account}</code> <code>{kind}</code>. Use <code>/</code> between folder levels.`;
@@ -282,7 +298,7 @@ function rootHtml() {
     <div class="muted">It can differ on each computer — for example your Google Drive folder on Windows and on a Mac.</div>
     <label for="root">Base folder on this computer</label>
     <input type="text" id="root" value="${esc(d.documentsRoot)}" data-original="${esc(d.documentsRoot)}" spellcheck="false">
-    <div class="rowbtns"><button class="primary" onclick="saveRoot()">Save</button><button onclick="cancelEdit()">Cancel</button><span class="msg"></span></div>`;
+    <div class="rowbtns"><button class="primary" onclick="saveRoot(this)">Save</button><button onclick="cancelEdit()">Cancel</button><span class="msg"></span></div>`;
 }
 
 function listHtml() {
@@ -315,7 +331,7 @@ function editorHtml(a) {
         <input type="text" id="f-file" data-field="fileName" value="${esc(a.fileName)}" data-original="${esc(a.fileName)}" spellcheck="false"></div>
     </div>
     <div class="preview" data-preview title="${esc(a.example)}">${esc(a.relative)}</div>
-    <div class="rowbtns"><button class="primary" onclick="saveAccount()">Save</button><button onclick="cancelEdit()">Cancel</button>
+    <div class="rowbtns"><button class="primary" onclick="saveAccount(this)">Save</button><button onclick="cancelEdit()">Cancel</button>
       <span class="muted">Example: where the latest document on record would be saved.</span><span class="msg"></span></div>`;
 }
 
@@ -378,11 +394,11 @@ async function postSettings(body) {
   } catch (e) { try { return JSON.parse(e.message).error || e.message; } catch { return e.message; } }
 }
 
-async function saveAccount() {
+async function saveAccount(btn) {
   const row = document.querySelector(".lrow.editing");
   const id = editingId;
-  const error = await postSettings({ accounts: [{ id, folder: $("#f-folder").value, fileName: $("#f-file").value,
-    group: $("#f-group").value, tags: $("#f-tags").value.split(",").map(t => t.trim()).filter(Boolean) }] });
+  const error = await working(btn, "Saving…", () => postSettings({ accounts: [{ id, folder: $("#f-folder").value, fileName: $("#f-file").value,
+    group: $("#f-group").value, tags: $("#f-tags").value.split(",").map(t => t.trim()).filter(Boolean) }] }));
   if (error) return setMsg(row, `<span class="s-broken">${esc(error)}</span>`);
   editingId = null;
   $("#acctList").innerHTML = listHtml();
@@ -393,8 +409,8 @@ async function saveAccount() {
   moved.classList.add("saved");
 }
 
-async function saveRoot() {
-  const error = await postSettings({ documentsRoot: $("#root").value });
+async function saveRoot(btn) {
+  const error = await working(btn, "Saving…", () => postSettings({ documentsRoot: $("#root").value }));
   if (error) return setMsg($("#rootCard"), `<span class="s-broken">${esc(error)}</span>`);
   editingRoot = false;
   $("#rootCard").innerHTML = rootHtml();
@@ -488,19 +504,36 @@ async function render() {
   if (p !== "/settings") timer = setTimeout(render, document.querySelector("[disabled]") ? 3000 : 30000);
 }
 
-async function run(id, kind) {
-  try { await post(`/accounts/${encodeURIComponent(id)}/${kind}`); } catch (e) { alert(e.message); }
-  setTimeout(render, 400);
+async function run(id, kind, btn) {
+  await working(btn, "Starting…", async () => {
+    await post(`/accounts/${encodeURIComponent(id)}/${kind}`);
+    await new Promise(r => setTimeout(r, 400));
+  });
+  render();
 }
-async function review(id, decision) { try { await post(`/review/${id}/${decision}`); } catch (e) { let m = e.message; try { m = JSON.parse(m).error || m; } catch { } alert(m); } render(); }
-async function testNotify() {
-  const r = await post("/notifications/test");
-  alert(r.length ? r.map(x => `${x.channel}: ${x.ok ? "sent" : x.error}`).join("\n") : "No notification channels are configured.");
+async function review(id, decision, btn) {
+  // Approving runs the actions, which can take a while.
+  await working(btn, decision === "approve" ? "Approving…" : "Rejecting…", () => post(`/review/${id}/${decision}`));
+  render();
 }
-async function dismiss(key) { await post(`/issues/${encodeURIComponent(key)}/dismiss`); render(); }
-async function dismissAll() { if (confirm("Dismiss all open issues? Any that still apply come back on a later check.")) { await post("/issues/dismiss-all"); render(); } }
-async function clearHistory() { if (confirm("Clear the list of past notifications?")) { await post("/notifications/clear"); render(); } }
-async function importHistory(id) { const r = await post(`/accounts/${encodeURIComponent(id)}/import-history`); alert(`Imported ${r.added} document(s).`); render(); }
+async function testNotify(btn) {
+  const r = await working(btn, "Sending…", () => post("/notifications/test"));
+  if (r) alert(r.length ? r.map(x => `${x.channel}: ${x.ok ? "sent" : x.error}`).join("\n") : "No notification channels are configured.");
+}
+async function dismiss(key, btn) { await working(btn, "Dismissing…", () => post(`/issues/${encodeURIComponent(key)}/dismiss`)); render(); }
+async function dismissAll(btn) {
+  if (!confirm("Dismiss all open issues? Any that still apply come back on a later check.")) return;
+  await working(btn, "Dismissing…", () => post("/issues/dismiss-all")); render();
+}
+async function clearHistory(btn) {
+  if (!confirm("Clear the list of past notifications?")) return;
+  await working(btn, "Clearing…", () => post("/notifications/clear")); render();
+}
+async function importHistory(id, btn) {
+  const r = await working(btn, "Importing…", () => post(`/accounts/${encodeURIComponent(id)}/import-history`));
+  if (r) alert(`Imported ${r.added} document(s).`);
+  render();
+}
 
 document.addEventListener("click", e => {
   const a = e.target.closest("a[data-nav]");
