@@ -215,8 +215,12 @@ public sealed class AccountRunner(
         return new(account.Id, state.Status, 0, 0, $"Sign-in failed: {AuthTransitions.Explain(result.Failure).What}.");
     }
 
-    private Task RaiseAuthIssueAsync(AccountConfig account, VendorAuthState state, CancellationToken ct, string? diagnostics = null)
+    private async Task RaiseAuthIssueAsync(AccountConfig account, VendorAuthState state, CancellationToken ct, string? diagnostics = null)
     {
+        // Issues raised per account before logins were shared are replaced by the login's one.
+        if (SignInIssueId(account) != account.Id)
+            foreach (var a in Logins.Siblings(config, account).Append(account))
+                await notify.ResolveAsync(AuthIssueKey(a.Id), null, ct);
         var (what, todo) = AuthTransitions.Explain(state.LastFailure);
         var needsYou = state.Status == AuthStatus.NeedsAssist;
         var waiting = needsYou ? $" Any new {account.KindWord}s are fetched right after you sign in." : "";
@@ -224,7 +228,7 @@ public sealed class AccountRunner(
         var detail = !needsYou && !string.IsNullOrWhiteSpace(state.LastFailureDetail) ? $" Details: {state.LastFailureDetail}" : "";
         // One notification per login: accounts sharing a sign-in don't each ask.
         var who = Logins.Label(config, account);
-        return notify.RaiseAsync(AuthIssueKey(SignInIssueId(account)), new Notification
+        await notify.RaiseAsync(AuthIssueKey(SignInIssueId(account)), new Notification
         {
             Level = NotificationLevel.ActionNeeded,
             AccountId = account.Id,

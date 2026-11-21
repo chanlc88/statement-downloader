@@ -120,6 +120,15 @@ public static class WebUi
         write.MapPost("/notifications/test", async (AppServices s, CancellationToken ct) =>
             Results.Ok((await s.Notify.SendTestAsync(ct)).Select(r => new { channel = r.Channel, ok = r.Error is null, error = r.Error })));
 
+        write.MapPost("/issues/dismiss-all", async (AppServices s, CancellationToken ct) =>
+            Results.Ok(new { dismissed = await s.Notify.ResolveAllAsync(ct) }));
+
+        write.MapPost("/notifications/clear", async (AppServices s, CancellationToken ct) =>
+        {
+            await s.Notify.ClearHistoryAsync(ct);
+            return Results.Ok();
+        });
+
         write.MapPost("/issues/{key}/dismiss", async (string key, AppServices s, CancellationToken ct) =>
         {
             await s.Notify.ResolveAsync(key, null, ct);

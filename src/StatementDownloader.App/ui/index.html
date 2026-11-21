@@ -125,7 +125,7 @@ function byGroup(items) {
 
 function issueHtml(i) {
   return `<div class="issue ${esc(i.level)}"><b>${esc(i.title)}</b>${esc(i.message)}
-    ${i.key && !i.key.startsWith("auth:") ? `<div class="actions"><button onclick="dismiss('${esc(i.key)}')">Dismiss</button></div>` : ""}</div>`;
+    ${i.key ? `<div class="actions"><button onclick="dismiss('${esc(i.key)}')">Dismiss</button>${i.key.startsWith("auth:") ? `<span class="muted">It comes back the next time a sign-in is needed.</span>` : ""}</div>` : ""}</div>`;
 }
 
 function accountButtons(a) {
@@ -247,8 +247,9 @@ async function renderIssues() {
       <td>${esc((n.channels || []).join(", ") || "log only")}${n.error ? `<div class="s-broken">${esc(n.error)}</div>` : ""}</td></tr>`).join("")}</table>`
     : `<div class="empty">No notifications yet.</div>`;
   const held = d.held.length ? `<p class="muted">${d.held.length} notification(s) held for quiet hours or the daily summary.</p>` : "";
-  return `<h3 style="margin-top:0">Open</h3>${open}<h3>Recent notifications</h3>
-    <div class="actions" style="margin:0 0 12px"><button onclick="testNotify()">Send test notification</button></div>${held}${recent}`;
+  const dismissAll = d.open.length > 1 ? `<div class="actions" style="margin:0 0 12px"><button onclick="dismissAll()">Dismiss all</button></div>` : "";
+  return `<h3 style="margin-top:0">Open</h3>${dismissAll}${open}<h3>Recent notifications</h3>
+    <div class="actions" style="margin:0 0 12px"><button onclick="testNotify()">Send test notification</button>${d.recent.length ? `<button onclick="clearHistory()">Clear history</button>` : ""}</div>${held}${recent}`;
 }
 
 const TOKENS_HELP = `Tokens: <code>{year}</code> <code>{month}</code> <code>{date:yyyy-MM-dd}</code> <code>{statement}</code> (statement or invoice number) <code>{account}</code> <code>{kind}</code>. Use <code>/</code> between folder levels.`;
@@ -497,6 +498,8 @@ async function testNotify() {
   alert(r.length ? r.map(x => `${x.channel}: ${x.ok ? "sent" : x.error}`).join("\n") : "No notification channels are configured.");
 }
 async function dismiss(key) { await post(`/issues/${encodeURIComponent(key)}/dismiss`); render(); }
+async function dismissAll() { if (confirm("Dismiss all open issues? Any that still apply come back on a later check.")) { await post("/issues/dismiss-all"); render(); } }
+async function clearHistory() { if (confirm("Clear the list of past notifications?")) { await post("/notifications/clear"); render(); } }
 async function importHistory(id) { const r = await post(`/accounts/${encodeURIComponent(id)}/import-history`); alert(`Imported ${r.added} document(s).`); render(); }
 
 document.addEventListener("click", e => {

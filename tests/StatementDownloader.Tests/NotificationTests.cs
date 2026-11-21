@@ -50,6 +50,23 @@ public sealed class NotificationTests : IDisposable
     }
 
     [Fact]
+    public async Task Dismiss_all_and_clear_history()
+    {
+        var (center, phone, _) = Center(new DateTimeOffset(2026, 1, 5, 12, 0, 0, TimeSpan.Zero));
+        await center.RaiseAsync("auth:a", Problem);
+        await center.RaiseAsync("documents:b", Problem);
+        Assert.Equal(2, await center.ResolveAllAsync());
+        Assert.Empty(await center.OpenIssuesAsync());
+        Assert.Equal(2, phone.Sent.Count);   // no "resolved" notices
+
+        await center.RaiseAsync("documents:c", Problem);
+        await center.ClearHistoryAsync();
+        var data = await center.ReadAsync();
+        Assert.Empty(data.Log);
+        Assert.Equal(["documents:c"], data.Issues.Select(i => i.Key));
+    }
+
+    [Fact]
     public async Task An_issue_still_open_after_quiet_hours_is_sent()
     {
         var (center, phone, clock) = Center(new DateTimeOffset(2026, 1, 5, 6, 30, 0, TimeSpan.Zero));

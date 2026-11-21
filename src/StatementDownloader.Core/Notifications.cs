@@ -115,6 +115,27 @@ public sealed class NotificationCenter(
             await NotifyAsync(new Notification { Level = NotificationLevel.Info, Title = "Resolved: " + resolved.Title, Message = resolvedMessage, AccountId = resolved.AccountId }, ct);
     }
 
+    /// <summary>Resolves every open issue without notices (the person cleared them). Returns how many.</summary>
+    public Task<int> ResolveAllAsync(CancellationToken ct = default)
+    {
+        var now = clock.GetUtcNow();
+        return JsonFile.UpdateAsync<NotificationData, int>(FilePath, data =>
+        {
+            var open = data.Issues.Where(i => i.IsOpen).ToList();
+            foreach (var i in open) i.ResolvedUtc = now;
+            data.Held.RemoveAll(h => h.IssueKey is not null && open.Any(i => i.Key == h.IssueKey));
+            return open.Count;
+        }, ct);
+    }
+
+    /// <summary>Empties the list of sent notifications and resolved issues (open issues stay).</summary>
+    public Task ClearHistoryAsync(CancellationToken ct = default) =>
+        JsonFile.UpdateAsync<NotificationData>(FilePath, data =>
+        {
+            data.Log.Clear();
+            data.Issues.RemoveAll(i => !i.IsOpen);
+        }, ct);
+
     public async Task<IReadOnlyList<Issue>> OpenIssuesAsync(CancellationToken ct = default) =>
         (await ReadAsync(ct)).Issues.Where(i => i.IsOpen).ToList();
 
