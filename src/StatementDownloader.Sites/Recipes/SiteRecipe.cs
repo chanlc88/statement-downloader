@@ -38,6 +38,11 @@ public sealed class SiteRecipe
 
 public sealed class SignInRecipe
 {
+    /// <summary>
+    /// The site refuses unattended (background) browsers. It is then only visited in a visible window
+    /// with the person present, and a due check becomes a "Sign in now" request instead.
+    /// </summary>
+    public bool Attended { get; set; }
     /// <summary>Page to open first; shows the sign-in form or, when remembered, the signed-in page.</summary>
     public string Url { get; set; } = "";
     public string Username { get; set; } = "";
@@ -56,7 +61,10 @@ public sealed class DocumentsRecipe
     /// <summary>What to do after signing in to reach the document list.</summary>
     public List<StepRecipe> Steps { get; set; } = [];
     public ListRecipe List { get; set; } = new();
-    /// <summary><c>fetch</c>: GET the link with the browser's cookies. <c>click</c>: click it and save the download.</summary>
+    /// <summary>
+    /// <c>fetch</c>: GET the link with the browser's cookies. <c>click</c>: click it and save the download.
+    /// <c>popup</c>: click it; the site opens the PDF in a new window (often a <c>blob:</c> URL), which is saved and closed.
+    /// </summary>
     public string Download { get; set; } = "fetch";
     /// <summary>On the first run (nothing on record), how far back to download.</summary>
     public string FirstRunLookback { get; set; } = "400d";
@@ -84,6 +92,12 @@ public sealed class ListRecipe
     public FieldRecipe Date { get; set; } = new();
     public FieldRecipe? Amount { get; set; }
     public LinkRecipe Link { get; set; } = new();
+    /// <summary>
+    /// Optional element in the row to click when the link isn't visible yet — for lists whose rows
+    /// open a details panel holding the link. The link selector may then use
+    /// <c>xpath=following-sibling::tr[1]//a</c> to reach into that panel.
+    /// </summary>
+    public string? Expand { get; set; }
 }
 
 /// <summary>A value in a row: a 1-based table cell, or the text of a selector, optionally narrowed by a regex.</summary>
@@ -242,7 +256,7 @@ public static class RecipeLoader
         Field(r.Documents.List.Date, "documents.list.date", required: true);
         if (r.Documents.List.Amount is { } amount) Field(amount, "documents.list.amount", required: false);
         Regex1(r.Documents.List.Link.Pattern, "documents.list.link.pattern");
-        if (r.Documents.Download is not ("fetch" or "click")) e.Add("documents.download must be fetch or click.");
+        if (r.Documents.Download is not ("fetch" or "click" or "popup")) e.Add("documents.download must be fetch, click or popup.");
 
         if (r.Parse.Date.Count == 0) e.Add("parse.date needs at least one pattern.");
         foreach (var (name, list) in new[] { ("require", r.Parse.Require), ("date", r.Parse.Date), ("statementNumber", r.Parse.StatementNumber), ("amount", r.Parse.Amount), ("accountNumber", r.Parse.AccountNumber) })

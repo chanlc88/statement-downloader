@@ -28,6 +28,8 @@ public enum AuthFailureReason
     AssistAbandoned,
     /// <summary>The login couldn't be read from the secret store.</summary>
     CredentialUnavailable,
+    /// <summary>The site blocks unattended browsers, so it is only visited with the person present.</summary>
+    AttendedOnly,
 }
 
 /// <summary>Sign-in state of one account on this machine.</summary>
@@ -90,7 +92,7 @@ public static class AuthTransitions
     }
 
     public static bool NeedsPerson(AuthFailureReason r) =>
-        r is AuthFailureReason.VerificationCode or AuthFailureReason.Captcha or AuthFailureReason.SessionExpired or AuthFailureReason.AssistAbandoned;
+        r is AuthFailureReason.VerificationCode or AuthFailureReason.Captcha or AuthFailureReason.SessionExpired or AuthFailureReason.AssistAbandoned or AuthFailureReason.AttendedOnly;
 
     /// <summary>Plain-language explanation and next step for a failure, used in notifications and the UI.</summary>
     public static (string What, string ToDo) Explain(AuthFailureReason reason) => reason switch
@@ -103,6 +105,7 @@ public static class AuthTransitions
         AuthFailureReason.SiteChanged => ("the site's pages no longer look as expected", "The site fetcher needs updating; a screenshot was saved to the diagnostics folder."),
         AuthFailureReason.SiteUnavailable => ("the site could not be reached or returned an error", "Nothing to do yet; it will retry on the next check."),
         AuthFailureReason.CredentialUnavailable => ("the login couldn't be read from your password manager", "Check the account's credential reference with: statement-downloader secrets test <reference>."),
+        AuthFailureReason.AttendedOnly => ("this site only lets you sign in with you present", "Choose Sign in now; a window opens and it signs in and downloads by itself. Some sites also show an \"I am human\" check."),
         _ => ("an unknown problem occurred", "Check the app log."),
     };
 }

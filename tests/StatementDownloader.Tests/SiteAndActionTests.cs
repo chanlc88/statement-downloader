@@ -80,3 +80,22 @@ public class RunCommandActionTests
         Assert.Contains("No amount", result.Summary);
     }
 }
+
+public class BotWallTests
+{
+    [Theory]
+    [InlineData("https://example.com/_Incapsula_Resource?SWUDNSAI=31&incident_id=1", true)]
+    [InlineData("https://newassets.hcaptcha.com/captcha/v1/abc/static/hcaptcha.html", true)]
+    [InlineData("https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/b", true)]
+    [InlineData("https://example.com/Billing/History", false)]
+    public void Recognizes_bot_check_frames(string url, bool expected) =>
+        Assert.Equal(expected, StatementDownloader.Sites.PlaywrightSiteFetcher.IsBotWallUrl(url));
+
+    [Theory]
+    [InlineData("Request unsuccessful. Incapsula incident ID: 123-456", true)]
+    [InlineData("example.com - Additional security check is required", true)]
+    [InlineData("Just a moment... Verifying you are human.", true)]
+    [InlineData("Welcome back! Your bill is ready.", false)]
+    public void Recognizes_bot_check_pages(string text, bool expected) =>
+        Assert.Equal(expected, StatementDownloader.Sites.PlaywrightSiteFetcher.IsBotWallText(text));
+}

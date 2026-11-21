@@ -1,0 +1,59 @@
+# Republic Services — trash and recycling (republicservices.com).
+# Format: docs/site-recipes.md. Regexes are written in 'single quotes' so backslashes stay as-is.
+id: republic-services
+name: Republic Services (waste and recycling)
+kind: bill
+region: US
+website: https://www.republicservices.com
+verified: 2026-11-20
+notes: >
+  Email + password sign-in (Auth0), no CAPTCHA seen. The site refuses unattended (headless)
+  browsers outright, so this recipe is attended: SD asks you to choose Sign in now when a bill
+  is due, then signs in and downloads in a visible window by itself. Payments → Invoice
+  History lists [invoice number, due date, amount]; clicking the invoice number opens the PDF
+  in a new window. The list is inside a shadow DOM, which Playwright selectors reach directly.
+  Use Current Invoice Charges as the amount: Total Amount Due can include credits or an
+  unpaid balance.
+
+signIn:
+  url: https://www.republicservices.com/account/manage/account-info
+  username: 'input#username'
+  password: 'input#password'
+  submit: 'button[name=action]'
+  signedIn: ':text-is("Logout")'
+  attended: true
+
+documents:
+  steps:
+    - goto: /account/payment
+    - click: '#invoices-tab-link'
+    - waitFor: '#invoices-tab tr a[role=button]'
+  list:
+    rows: '#invoices-tab tr:has(a[role=button])'
+    date: { column: 2 }
+    amount: { column: 3 }
+    link: { selector: 'a[role=button]' }
+  download: popup
+
+parse:
+  require: 'Republic ?Services'
+  date: 'Invoice Date ([A-Z][a-z]+ \d{1,2}, \d{4})'
+  dateFormats: ['MMMM d, yyyy']
+  statementNumber: 'Invoice Number (\d{4}-\d{6,})'
+  accountNumber: 'Account Number (\d-\d{4}-\d{7})'
+  amount: 'Current Invoice Charges \$([\d,]+\.\d{2})'
+
+# Checked by the test suite. Made-up numbers only; text is in the order `pdf-text` prints it.
+tests:
+  documents:
+    - text: >-
+        100 Main St Atlanta GA 30000 RepublicServices.com/Support Account Number 1-2345-6789012
+        Invoice Number 2345-000000001 Invoice Date October 25, 2026 Previous Balance $50.00
+        Payments/Adjustments -$50.00 Current Invoice Charges $123.45 Total Amount Due $123.45
+        Payment Due Date November 14, 2026 REPUBLIC SERVICES #100
+      expect: { date: 2026-10-25, statementNumber: '2345-000000001', amount: 123.45, accountNumber: '1-2345-6789012' }
+    - text: 'SCANA Energy Invoice Date October 25, 2026 Current Invoice Charges $5.00'
+      expect: null
+  rows:
+    - cells: ['2345-000000001', ' 11/14/2026 ', '$123.45']
+      expect: { date: 2026-11-14, amount: 123.45, url: '' }

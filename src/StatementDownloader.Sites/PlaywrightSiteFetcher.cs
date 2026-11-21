@@ -32,8 +32,15 @@ public abstract class PlaywrightSiteFetcher : ISiteFetcher
     protected abstract Task SubmitSignInAsync(IPage page, SiteCredential credential, CancellationToken ct);
     protected abstract Task<IReadOnlyList<FoundDocument>> DownloadNewDocumentsAsync(IPage page, IBrowserContext browser, SiteContext ctx, CancellationToken ct);
 
+    /// <summary>The site refuses unattended browsers; only visit it in a visible window with the person present.</summary>
+    protected virtual bool AttendedOnly => false;
+
     public async Task<SiteResult> RunAsync(SiteContext ctx, CancellationToken ct = default)
     {
+        // Don't keep knocking on a site that blocks unattended browsers: ask the person instead.
+        if (AttendedOnly && !ctx.Interactive)
+            return SiteResult.AuthFailed(AuthFailureReason.AttendedOnly, null);
+
         using var playwright = await Playwright.CreateAsync();
         Directory.CreateDirectory(ctx.ProfileDir);
         await using var browser = await playwright.Chromium.LaunchPersistentContextAsync(ctx.ProfileDir, new BrowserTypeLaunchPersistentContextOptions
@@ -134,8 +141,11 @@ public abstract class PlaywrightSiteFetcher : ISiteFetcher
     {
         var captcha = await page.Locator("iframe[src*='recaptcha'], iframe[src*='hcaptcha'], iframe[src*='turnstile'], .g-recaptcha, [data-sitekey]").CountAsync();
         if (captcha > 0) return AuthFailureReason.Captcha;
+        // Bot walls (Imperva/Incapsula, Cloudflare, Akamai…) often put the CAPTCHA in a nested frame.
+        if (page.Frames.Any(f => IsBotWallUrl(f.Url))) return AuthFailureReason.Captcha;
 
         var text = await BodyTextAsync(page);
+        if (IsBotWallText(text)) return AuthFailureReason.Captcha;
         if (Regex.IsMatch(text, @"verification code|security code|one[- ]time (pass)?code|passcode|we (sent|texted)|enter the code|two[- ]step|2fa|multi[- ]factor", RegexOptions.IgnoreCase))
             return AuthFailureReason.VerificationCode;
         if (await HasSignInFormAsync(page, ct) &&
@@ -144,6 +154,14 @@ public abstract class PlaywrightSiteFetcher : ISiteFetcher
         if (await HasSignInFormAsync(page, ct)) return AuthFailureReason.SessionExpired;
         return AuthFailureReason.SiteChanged;
     }
+
+    /// <summary>A frame URL that belongs to a bot-check service rather than the site.</summary>
+    public static bool IsBotWallUrl(string url) =>
+        Regex.IsMatch(url, @"_Incapsula_Resource|hcaptcha\.com|recaptcha|challenges\.cloudflare\.com|/cdn-cgi/challenge-platform|captcha-delivery\.com|perimeterx|px-captcha", RegexOptions.IgnoreCase);
+
+    /// <summary>Page text of a bot-check interstitial ("Additional security check is required", "Just a moment…").</summary>
+    public static bool IsBotWallText(string text) =>
+        Regex.IsMatch(text, @"Incapsula incident|Additional security check is required|verify (that )?you are (a )?human|I am human|Checking (if the site connection is secure|your browser)|Just a moment\.\.\.|Press (and|&) hold|Access Denied.{0,80}Reference #", RegexOptions.IgnoreCase | RegexOptions.Singleline);
 
     protected static async Task<string> BodyTextAsync(IPage page)
     {
@@ -192,6 +210,39 @@ public abstract class PlaywrightSiteFetcher : ISiteFetcher
         var download = await page.RunAndWaitForDownloadAsync(() => target.ClickAsync(), new PageRunAndWaitForDownloadOptions { Timeout = 60_000 });
         var path = Path.Combine(workDir, name);
         await download.SaveAsAsync(path);
+        return PdfText.LooksLikePdf(await File.ReadAllBytesAsync(path)) ? path : null;
+    }
+
+    /// <summary>
+    /// Clicks something that opens the PDF in a new window and saves it. Handles a window that
+    /// downloads, one pointed at a normal URL, and one pointed at a <c>blob:</c> URL made by the page.
+    /// </summary>
+    protected static async Task<string?> DownloadByPopupAsync(IPage page, IBrowserContext browser, ILocator target, string workDir, string name)
+    {
+        var path = Path.Combine(workDir, name);
+        var popup = await page.RunAndWaitForPopupAsync(() => target.ClickAsync(), new PageRunAndWaitForPopupOptions { Timeout = 60_000 });
+        var downloaded = new TaskCompletionSource<IDownload>(TaskCreationOptions.RunContinuationsAsynchronously);
+        popup.Download += (_, dl) => downloaded.TrySetResult(dl);
+        try
+        {
+            // The page usually opens an empty window first and points it at the PDF once it's fetched.
+            var deadline = DateTime.UtcNow.AddSeconds(60);
+            while (DateTime.UtcNow < deadline && !downloaded.Task.IsCompleted && popup.Url is "" or "about:blank")
+                await Task.Delay(500);
+            if (downloaded.Task.IsCompleted) await (await downloaded.Task).SaveAsAsync(path);
+            else if (popup.Url.StartsWith("blob:", StringComparison.Ordinal))
+            {
+                // A blob URL can be read from the page that made it.
+                var base64 = await page.EvaluateAsync<string>(
+                    """async url => { const b = await (await fetch(url)).blob(); return await new Promise(r => { const f = new FileReader(); f.onload = () => r(String(f.result).split(',')[1] ?? ''); f.readAsDataURL(b); }); }""",
+                    popup.Url);
+                await File.WriteAllBytesAsync(path, Convert.FromBase64String(base64));
+            }
+            else if (popup.Url.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+                return await DownloadPdfAsync(browser, popup.Url, workDir, name);
+            else return null;
+        }
+        finally { await popup.CloseAsync(); }
         return PdfText.LooksLikePdf(await File.ReadAllBytesAsync(path)) ? path : null;
     }
 

@@ -61,7 +61,7 @@ public class RecipeTests
         var list = recipe.Documents.List;
         var row = RecipeRows.Read(list, RecipeRows.Cell(list.Date, sample.Cells),
             list.Amount is { } a ? RecipeRows.Cell(a, sample.Cells) : null, sample.Link, recipe.Parse.DateFormats,
-            clickToDownload: recipe.Documents.Download == "click");
+            clickToDownload: recipe.Documents.Download is "click" or "popup");
         Assert.NotNull(row);
         Assert.Equal(DateOnly.Parse(sample.Expect.Date), row.Date);
         Assert.Equal(sample.Expect.Amount, row.Amount);
@@ -147,7 +147,7 @@ public class RecipeTests
             parse: { date: "Date \\S+" }
             """;
         var ex = Assert.Throws<InvalidDataException>(() => RecipeLoader.Parse(yaml, "bad.yaml"));
-        foreach (var expected in new[] { "id is required", "name is required", "https://", "exactly one of click", "counts from 1", "link.pattern", "fetch or click", "parse.date" })
+        foreach (var expected in new[] { "id is required", "name is required", "https://", "exactly one of click", "counts from 1", "link.pattern", "fetch, click or popup", "parse.date" })
             Assert.Contains(expected, ex.Message);
     }
 

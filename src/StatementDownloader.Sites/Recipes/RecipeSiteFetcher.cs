@@ -13,6 +13,7 @@ public sealed class RecipeSiteFetcher(SiteRecipe recipe) : PlaywrightSiteFetcher
     public override string DisplayName => recipe.Name;
     protected override string StartUrl => recipe.SignIn.Url;
     protected override IReadOnlyCollection<string>? SignInCookieNames => recipe.SignIn.RememberCookies;
+    protected override bool AttendedOnly => recipe.SignIn.Attended;
 
     private SignInRecipe S => recipe.SignIn;
 
@@ -70,7 +71,8 @@ public sealed class RecipeSiteFetcher(SiteRecipe recipe) : PlaywrightSiteFetcher
             ? ctx.Known.Max(k => k.DocumentDate)
             : DateOnly.FromDateTime(DateTime.Today - Durations.Parse(d.FirstRunLookback));
 
-        var candidates = new List<(ListedDocument Doc, ILocator LinkElement)>();
+        var byClick = d.Download is "click" or "popup";
+        var candidates = new List<(ListedDocument Doc, ILocator Row, ILocator LinkElement)>();
         foreach (var row in await rows.AllAsync())
         {
             var cells = list.Date.Column is not null || list.Amount?.Column is not null ? await row.Locator("td, th").AllInnerTextsAsync() : [];
@@ -80,8 +82,8 @@ public sealed class RecipeSiteFetcher(SiteRecipe recipe) : PlaywrightSiteFetcher
                 list.Amount is { } a ? await FieldTextAsync(row, a, cells) : null,
                 await Quietly(() => linkElement.GetAttributeAsync(list.Link.Attribute, new LocatorGetAttributeOptions { Timeout = 2000 })),
                 recipe.Parse.DateFormats,
-                clickToDownload: d.Download == "click");
-            if (listed is not null && listed.Date > newest) candidates.Add((listed, linkElement));
+                clickToDownload: byClick);
+            if (listed is not null && listed.Date > newest) candidates.Add((listed, row, linkElement));
         }
         if (candidates.Count == 0)
         {
@@ -91,12 +93,20 @@ public sealed class RecipeSiteFetcher(SiteRecipe recipe) : PlaywrightSiteFetcher
 
         var baseUrl = await FrameUrlAsync(page, list.Frame) ?? page.Url;
         var found = new List<FoundDocument>();
-        foreach (var (doc, linkElement) in candidates.OrderBy(c => c.Doc.Date))
+        foreach (var (doc, row, linkElement) in candidates.OrderBy(c => c.Doc.Date))
         {
             var name = $"{doc.Date:yyyy-MM-dd}-{found.Count}.pdf";
-            var path = d.Download == "click"
-                ? await DownloadByClickAsync(page, linkElement, ctx.WorkDir, name)
-                : await DownloadPdfAsync(browser, new Uri(new Uri(baseUrl), doc.Link).ToString(), ctx.WorkDir, name);
+            if (list.Expand is { } expand && !await linkElement.IsVisibleAsync())
+            {
+                await row.Locator(expand).First.ClickAsync(new LocatorClickOptions { Timeout = 10_000 });
+                await linkElement.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 15_000 });
+            }
+            var path = d.Download switch
+            {
+                "click" => await DownloadByClickAsync(page, linkElement, ctx.WorkDir, name),
+                "popup" => await DownloadByPopupAsync(page, browser, linkElement, ctx.WorkDir, name),
+                _ => await DownloadPdfAsync(browser, new Uri(new Uri(baseUrl), doc.Link).ToString(), ctx.WorkDir, name),
+            };
             if (path is null)
             {
                 ctx.Log.LogWarning("{Site}: the {Kind} dated {Date} didn't download as a PDF", SiteId, recipe.Kind, doc.Date);
