@@ -484,7 +484,7 @@ async function run(id, kind) {
   try { await post(`/accounts/${encodeURIComponent(id)}/${kind}`); } catch (e) { alert(e.message); }
   setTimeout(render, 400);
 }
-async function review(id, decision) { try { await post(`/review/${id}/${decision}`); } catch (e) { alert(e.message); } render(); }
+async function review(id, decision) { try { await post(`/review/${id}/${decision}`); } catch (e) { let m = e.message; try { m = JSON.parse(m).error || m; } catch { } alert(m); } render(); }
 async function testNotify() {
   const r = await post("/notifications/test");
   alert(r.length ? r.map(x => `${x.channel}: ${x.ok ? "sent" : x.error}`).join("\n") : "No notification channels are configured.");

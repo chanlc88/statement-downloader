@@ -47,7 +47,14 @@ public static class ConfigEditor
     {
         var lines = Split(yaml, out var nl);
         var start = lines.FindIndex(l => Regex.IsMatch(l, $@"^\s*-\s+id\s*:\s*[""']?{Regex.Escape(accountId)}[""']?\s*(#.*)?$"));
-        if (start < 0) throw new InvalidDataException($"Account '{accountId}' wasn't found in the config file (looked for a line '- id: {accountId}').");
+        if (start < 0)
+        {
+            // Valid YAML can list keys in any order, but this editor finds an account by its first line.
+            var elsewhere = lines.Any(l => Regex.IsMatch(l, $@"^\s*(-\s+)?id\s*:\s*[""']?{Regex.Escape(accountId)}[""']?\s*(#.*)?$"));
+            throw new InvalidDataException(elsewhere
+                ? $"Settings can only change an account whose entry starts with its id. In config.yaml, move the line 'id: {accountId}' to the top of that account, as '- id: {accountId}', then try again."
+                : $"Account '{accountId}' wasn't found in the config file (looked for a line '- id: {accountId}').");
+        }
 
         var dashIndent = lines[start].Length - lines[start].TrimStart().Length;
         var keyIndent = lines[start].IndexOf("id", dashIndent, StringComparison.Ordinal);
@@ -113,28 +120,6 @@ public static class ConfigEditor
         File.WriteAllText(temp, yaml, new UTF8Encoding(false));
         if (File.Exists(path)) File.Copy(path, path + ".bak", overwrite: true);
         File.Move(temp, path, overwrite: true);
-    }
-
-    /// <summary>Problems with a folder value (relative to documentsRoot), or null when fine.</summary>
-    public static string? FolderProblem(string folder)
-    {
-        if (string.IsNullOrWhiteSpace(folder)) return "Folder is required.";
-        if (Path.IsPathRooted(folder) || Regex.IsMatch(folder, @"^[A-Za-z]:")) return "Folder must be relative to the base folder (no drive letter or leading slash).";
-        if (folder.Split('/', '\\').Any(p => p == "..")) return "Folder can't contain '..'.";
-        if (folder.Replace("{year}", "").Replace("{month}", "").IndexOfAny(['<', '>', ':', '"', '|', '?', '*', '{', '}']) >= 0)
-            return "Folder can only use the {year} and {month} tokens, and no < > : \" | ? * characters.";
-        return null;
-    }
-
-    /// <summary>Problems with a file-name template, or null when fine.</summary>
-    public static string? FileNameProblem(string fileName)
-    {
-        if (!FileNameTemplate.HasDateToken(fileName)) return "File name must contain a date token such as {date:yyyy-MM-dd}.";
-        if (fileName.IndexOfAny(['/', '\\']) >= 0) return "File name can't contain / or \\ — put subfolders in Folder.";
-        if (!fileName.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase)) return "File name should end in .pdf.";
-        var stripped = Regex.Replace(fileName, @"\{[^}]*\}", "");
-        if (stripped.IndexOfAny(['<', '>', ':', '"', '|', '?', '*']) >= 0) return "File name can't contain < > : \" | ? * characters.";
-        return null;
     }
 
     private static List<string> Split(string yaml, out string newline)

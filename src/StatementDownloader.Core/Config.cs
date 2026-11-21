@@ -176,8 +176,8 @@ public static class ConfigLoader
             else if (!ids.Add(a.Id)) errors.Add($"{at}: duplicate id.");
             if (string.IsNullOrWhiteSpace(a.Site)) errors.Add($"{at}: site is required.");
             if (string.IsNullOrWhiteSpace(a.Credential)) errors.Add($"{at}: credential is required.");
-            if (string.IsNullOrWhiteSpace(a.Folder)) errors.Add($"{at}: folder is required.");
-            if (!FileNameTemplate.HasDateToken(a.FileName)) errors.Add($"{at}: fileName must contain a {{date:FORMAT}} token.");
+            if (AccountLocation.FolderProblem(a.Folder) is { } folderProblem) errors.Add($"{at}: {folderProblem}");
+            if (AccountLocation.FileNameProblem(a.FileName) is { } fileProblem) errors.Add($"{at}: {fileProblem}");
             try
             {
                 _ = a.Schedule.Mode switch { ScheduleMode.Window => (object)a.Schedule.DayRange, ScheduleMode.Interval => a.Schedule.Interval, _ => 0 };
@@ -185,6 +185,7 @@ public static class ConfigLoader
             catch (FormatException ex) { errors.Add($"{at}: {ex.Message}"); }
             foreach (var act in a.Actions)
                 if (!act.ContainsKey("type")) errors.Add($"{at}: every action needs a type.");
+            errors.AddRange(ActionKeys.Problems(a).Select(p => $"{at}: {p}"));
         }
         if (errors.Count > 0) throw new InvalidDataException("Config is not valid:\n  - " + string.Join("\n  - ", errors));
     }

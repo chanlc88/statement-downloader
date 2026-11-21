@@ -77,6 +77,26 @@ public sealed class TickRunner(
         return report;
     }
 
+    /// <summary>
+    /// Approves or rejects a document waiting for review. Approval runs the account's actions
+    /// under the same run lock as scheduled and manual runs, so an action never runs twice at once.
+    /// Returns null when no such document is waiting, otherwise the number of failed actions.
+    /// </summary>
+    public async Task<int?> ReviewAsync(string docId, bool approve, CancellationToken ct = default, TimeSpan? lockWait = null)
+    {
+        using var runLock = TryLock(wait: lockWait ?? TimeSpan.FromMinutes(1)) ?? throw new InvalidOperationException("A check is running right now; approve again in a few minutes.");
+        // Re-read inside the lock: another run may have changed the document meanwhile.
+        var doc = (await documents.GetAsync(null, ct)).FirstOrDefault(d => d.Id == docId);
+        if (doc is null || doc.Review != ReviewState.Pending) return null;
+        if (config.Accounts.FirstOrDefault(a => a.Id == doc.AccountId) is not { } account) return null;
+
+        doc.Review = approve ? ReviewState.Approved : ReviewState.Rejected;
+        await documents.UpdateAsync(doc, ct);
+        var failed = approve ? await runner.Actions.RunForDocumentAsync(account, doc, ct) : 0;
+        await notify.SendDueAsync(ct);
+        return failed;
+    }
+
     public async Task<(CycleEstimate? Estimate, IReadOnlyList<DocumentRecord> Documents)> EstimateAsync(AccountConfig account, CancellationToken ct = default)
     {
         var docs = await documents.GetAsync(account.Id, ct);

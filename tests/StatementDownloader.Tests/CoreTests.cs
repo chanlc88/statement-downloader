@@ -235,6 +235,6 @@ public class ConfigTests
               - { id: "Bad Id", site: s, credential: c, folder: f, fileName: "no-date.pdf" }
             """));
         Assert.Contains("lowercase", ex.Message);
-        Assert.Contains("{date:FORMAT}", ex.Message);
+        Assert.Contains("date token", ex.Message);
     }
 }

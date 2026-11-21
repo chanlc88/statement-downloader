@@ -85,7 +85,7 @@ running agent without a restart. Documents already saved are not moved.
 | `kind` | no | `bill` (default), `invoice` or `statement`. |
 | `credential` | yes | Secret reference for the login (see §6). |
 | `siteOptions` | no | Site-specific settings, e.g. the account number when one login covers several accounts. |
-| `folder` | yes | Destination folder, relative to `documentsRoot`. Tokens: `{year}`, `{month}`. |
+| `folder` | yes | Destination folder, relative to `documentsRoot` — no drive letter, leading slash or `..`; files can never be saved outside `documentsRoot`. Tokens: `{year}`, `{month}`, `{account}`, `{kind}`. |
 | `fileName` | yes | File name pattern. Tokens: `{date:FORMAT}`, `{statement}`, `{kind}`, `{account}`. Must contain a `{date:…}` token so history can be read back from file names. |
 | `schedule` | no | See §4. Default `auto`. |
 | `review` | no | `true` = new documents wait in the review list before actions run. Default `false`. |
@@ -168,7 +168,13 @@ and runs nothing.
 ### 5.3 Actions
 
 Each action runs once per document. Its result is stored with the document so it is
-never repeated, and failures are retried on the next run and reported.
+never repeated, and failures are retried on the next run and reported. Actions are
+remembered by identity, not position: an optional `id` setting (letters, digits, `-`, `_`),
+or else the action's type (`webhook`, `webhook#2` for a second one). Give actions an `id`
+when an account has two of the same type you may reorder. An action added to an account
+later applies to documents found from then on; it isn't replayed over older ones.
+Approving a document on the Review page runs its actions under the same lock as checks,
+so an action never runs twice at once.
 
 | Type | What it does |
 |---|---|

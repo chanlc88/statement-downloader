@@ -106,21 +106,13 @@ public static class WebUi
 
         write.MapPost("/review/{docId}/{decision}", async (string docId, string decision, AppServices s, CancellationToken ct) =>
         {
-            var doc = (await s.Documents.GetAsync(null, ct)).FirstOrDefault(d => d.Id == docId);
-            if (doc is null || doc.Review != ReviewState.Pending) return Results.NotFound();
-            var account = s.Account(doc.AccountId);
-            if (decision == "reject")
+            if (decision is not ("approve" or "reject")) return Results.BadRequest();
+            try
             {
-                doc.Review = ReviewState.Rejected;
-                await s.Documents.UpdateAsync(doc, ct);
-                return Results.Ok(new { failed = 0 });
+                var failed = await s.Ticks.ReviewAsync(docId, decision == "approve", ct);
+                return failed is null ? Results.NotFound() : Results.Ok(new { failed });
             }
-            if (decision != "approve") return Results.BadRequest();
-            doc.Review = ReviewState.Approved;
-            await s.Documents.UpdateAsync(doc, ct);
-            var failed = await s.Actions.RunForDocumentAsync(account, doc, ct);
-            await s.Notify.SendDueAsync(ct);
-            return Results.Ok(new { failed });
+            catch (InvalidOperationException ex) { return Results.Conflict(new { error = ex.Message }); }
         });
 
         write.MapPost("/notifications/test", async (AppServices s, CancellationToken ct) =>
@@ -140,7 +132,7 @@ public static class WebUi
         {
             var a = s.Account(account);
             folder ??= a.Folder; fileName ??= a.FileName; root = string.IsNullOrWhiteSpace(root) ? s.Config.DocumentsRoot : ConfigLoader.ExpandHome(root.Trim());
-            var problem = ConfigEditor.FolderProblem(folder) ?? ConfigEditor.FileNameProblem(fileName);
+            var problem = AccountLocation.FolderProblem(folder) ?? AccountLocation.FileNameProblem(fileName);
             if (problem is not null) return Results.Ok(new { problem });
             var path = await ExamplePathAsync(s, a, root, folder, fileName, ct);
             return Results.Ok(new { path, relative = Relative(root, path) });
@@ -182,7 +174,7 @@ public static class WebUi
                     var account = s.Account(a.Id);
                     var folder = (a.Folder ?? account.Folder).Trim().Replace('\\', '/').Trim('/');
                     var fileName = (a.FileName ?? account.FileName).Trim();
-                    if ((ConfigEditor.FolderProblem(folder) ?? ConfigEditor.FileNameProblem(fileName)) is { } problem)
+                    if ((AccountLocation.FolderProblem(folder) ?? AccountLocation.FileNameProblem(fileName)) is { } problem)
                         return Results.BadRequest(new { error = $"{account.DisplayName}: {problem}" });
                     if (folder != account.Folder) yaml = ConfigEditor.SetAccountValue(yaml, account.Id, "folder", folder);
                     if (fileName != account.FileName) yaml = ConfigEditor.SetAccountValue(yaml, account.Id, "fileName", fileName);

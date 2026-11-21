@@ -28,7 +28,9 @@ public sealed class DocumentRecord
 
 public sealed class ActionRecord
 {
-    /// <summary>Position of the action in the account's action list.</summary>
+    /// <summary>Stable identity of the configured action (<see cref="ActionKeys"/>); null in records from older versions.</summary>
+    public string? Key { get; set; }
+    /// <summary>Position of the action in the account's action list when it last ran (informational).</summary>
     public int Index { get; set; }
     public string Type { get; set; } = "";
     public bool Succeeded { get; set; }
@@ -147,7 +149,7 @@ public sealed record FiledDocument(FileOutcome Outcome, string Path, string Sha2
 public sealed class DocumentFiler(string documentsRoot)
 {
     public string TargetPath(AccountConfig account, FoundDocument doc) =>
-        System.IO.Path.Combine(documentsRoot,
+        AccountLocation.Resolve(documentsRoot,
             FileNameTemplate.Render(account.Folder, account, doc.DocumentDate, doc.StatementNumber),
             FileNameTemplate.Render(account.FileName, account, doc.DocumentDate, doc.StatementNumber));
 

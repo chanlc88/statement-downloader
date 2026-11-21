@@ -26,6 +26,7 @@ public sealed class AccountRunner(
     ILoggerFactory loggers)
 {
     private readonly ILogger _log = loggers.CreateLogger<AccountRunner>();
+    public ActionRunner Actions => actions;
     private TimeSpan ExpiryWarning => TimeSpan.FromDays(config.Schedule.ExpiryWarningDays);
 
     public static string AuthIssueKey(string id) => $"auth:{id}";
@@ -232,35 +233,65 @@ public sealed class ActionRunner(
     IReadOnlyDictionary<string, IDocumentAction> registry,
     ISecretProvider secrets,
     IDocumentStore documents,
+    IScheduleStateStore schedule,
     NotificationCenter notify,
     UiLinks links,
     TimeProvider clock,
     ILoggerFactory loggers)
 {
-    /// <summary>Returns the number of action runs that failed.</summary>
+    /// <summary>
+    /// Runs actions that haven't succeeded yet on the account's documents. An action added to
+    /// the config later only applies to documents found after it was added, so adding one
+    /// never replays it over the whole history. Returns the number of action runs that failed.
+    /// </summary>
     public async Task<int> RunPendingAsync(AccountConfig account, CancellationToken ct = default)
     {
+        var since = await ActionStartsAsync(account, ct);
         if (account.Actions.Count == 0) return 0;
         var failed = 0;
         foreach (var doc in await documents.GetAsync(account.Id, ct))
         {
             if (doc.Imported || doc.Review is ReviewState.Pending or ReviewState.Rejected) continue;
-            failed += await RunForDocumentAsync(account, doc, ct);
+            failed += await RunForDocumentAsync(account, doc, ct, since);
         }
         return failed;
     }
 
-    public async Task<int> RunForDocumentAsync(AccountConfig account, DocumentRecord doc, CancellationToken ct = default)
+    /// <summary>When each of the account's actions was first seen, recording new ones as of now.</summary>
+    private async Task<IReadOnlyDictionary<string, DateTimeOffset>> ActionStartsAsync(AccountConfig account, CancellationToken ct)
+    {
+        var state = await schedule.GetAsync(account.Id, ct);
+        var keys = ActionKeys.For(account);
+        // First run with stable keys: the actions already configured keep applying to every
+        // document, as they did before. From then on, a new key starts now.
+        var changed = state.ActionsSince is null;
+        var start = changed ? DateTimeOffset.MinValue : clock.GetUtcNow();
+        state.ActionsSince ??= [];
+        foreach (var key in keys)
+            changed |= state.ActionsSince.TryAdd(key, start);
+        if (changed) await schedule.SaveAsync(state, ct);
+        return state.ActionsSince;
+    }
+
+    /// <param name="since">When each action started applying; documents found earlier are left alone. Null runs them all (approval).</param>
+    public async Task<int> RunForDocumentAsync(AccountConfig account, DocumentRecord doc, CancellationToken ct = default, IReadOnlyDictionary<string, DateTimeOffset>? since = null)
     {
         var failed = 0;
+        var keys = ActionKeys.For(account);
         for (var i = 0; i < account.Actions.Count; i++)
         {
             var settings = account.Actions[i];
             var type = settings.GetValueOrDefault("type") ?? "";
-            if (doc.Actions.Any(a => a.Index == i && a.Succeeded)) continue;
+            var key = keys[i];
+            if (since?.TryGetValue(key, out var from) == true && doc.FirstSeenUtc < from) continue;
 
-            var rec = doc.Actions.FirstOrDefault(a => a.Index == i) ?? new ActionRecord { Index = i, Type = type };
-            if (!doc.Actions.Contains(rec)) doc.Actions.Add(rec);
+            // Records from before stable keys only knew the position; adopt one if the type matches.
+            var rec = doc.Actions.FirstOrDefault(a => a.Key == key)
+                      ?? doc.Actions.FirstOrDefault(a => a.Key is null && a.Index == i && a.Type == type);
+            if (rec is null) doc.Actions.Add(rec = new ActionRecord { Type = type });
+            rec.Key = key;
+            rec.Index = i;
+            if (rec.Succeeded) continue;
             ActionResult result;
             if (!registry.TryGetValue(type, out var action)) result = ActionResult.Fail($"Unknown action type '{type}'.");
             else
@@ -281,17 +312,18 @@ public sealed class ActionRunner(
             rec.Summary = result.Summary;
             await documents.UpdateAsync(doc, ct);
 
-            var key = $"action:{doc.Id}:{i}";
+            var issueKey = $"action:{doc.Id}:{key}";
             var label = $"{account.DisplayName} {account.KindWord} {doc.DocumentDate:yyyy-MM-dd}";
             if (result.Succeeded)
             {
-                await notify.ResolveAsync(key, null, ct);
+                await notify.ResolveAsync(issueKey, null, ct);
+                await notify.ResolveAsync($"action:{doc.Id}:{i}", null, ct);   // raised before stable keys
                 await notify.NotifyAsync(new Notification { Level = NotificationLevel.Info, AccountId = account.Id, Title = $"{label}: {type} done", Message = result.Summary, Link = links.Account(account.Id) }, ct);
             }
             else
             {
                 failed++;
-                await notify.RaiseAsync(key, new Notification
+                await notify.RaiseAsync(issueKey, new Notification
                 {
                     Level = NotificationLevel.ActionNeeded,
                     AccountId = account.Id,

@@ -117,6 +117,15 @@ public class ConfigEditorTests
         Assert.Throws<InvalidDataException>(() => ConfigEditor.SetAccountValue(Yaml, "nope", "folder", "x"));
 
     [Fact]
+    public void An_account_not_starting_with_its_id_gets_a_clear_message()
+    {
+        var idSecond = Yaml.Replace("  - id: gas\n    site: scana-energy\n", "  - site: scana-energy\n    id: gas\n");
+        Assert.Equal("gas", ConfigEditor.Check(idSecond).Accounts[1].Id);   // still valid YAML
+        var ex = Assert.Throws<InvalidDataException>(() => ConfigEditor.SetAccountValue(idSecond, "gas", "folder", "x"));
+        Assert.Contains("move the line 'id: gas' to the top", ex.Message);
+    }
+
+    [Fact]
     public void Save_keeps_a_backup_and_refuses_an_invalid_config()
     {
         var dir = Directory.CreateTempSubdirectory("sd-cfg-").FullName;
@@ -145,7 +154,7 @@ public class ConfigEditorTests
     [InlineData("", "required")]
     public void Folder_rules(string folder, string? problemContains)
     {
-        var p = ConfigEditor.FolderProblem(folder);
+        var p = AccountLocation.FolderProblem(folder);
         if (problemContains is null) Assert.Null(p); else Assert.Contains(problemContains, p);
     }
 
@@ -158,7 +167,46 @@ public class ConfigEditorTests
     [InlineData("{date:yyyy-MM-dd}-Bill?.pdf", "characters")]
     public void File_name_rules(string fileName, string? problemContains)
     {
-        var p = ConfigEditor.FileNameProblem(fileName);
+        var p = AccountLocation.FileNameProblem(fileName);
         if (problemContains is null) Assert.Null(p); else Assert.Contains(problemContains, p);
+    }
+}
+
+public class AccountLocationTests
+{
+    private static string Config(string folder, string fileName) => $$"""
+        documentsRoot: "C:/Docs"
+        accounts:
+          - id: water
+            site: dekalb-water
+            credential: env:X
+            folder: "{{folder}}"
+            fileName: "{{fileName}}"
+        """;
+
+    [Theory]
+    [InlineData("C:/Elsewhere", "{date:yyyy-MM-dd}-W.pdf", "relative")]
+    [InlineData("Bills/../../Windows", "{date:yyyy-MM-dd}-W.pdf", "..")]
+    [InlineData("Bills", "../{date:yyyy-MM-dd}-W.pdf", "subfolders")]
+    [InlineData("Bills", "{date:yyyy-MM-dd}-W.txt", ".pdf")]
+    public void Hand_edited_config_gets_the_same_rules_as_Settings(string folder, string fileName, string problem)
+    {
+        var ex = Assert.Throws<InvalidDataException>(() => ConfigLoader.Parse(Config(folder, fileName)));
+        Assert.Contains(problem, ex.Message);
+        Assert.Contains("water:", ex.Message);
+    }
+
+    [Fact]
+    public void Folder_may_use_account_and_kind_tokens() =>
+        Assert.Null(AccountLocation.FolderProblem("Bills/{account}/{kind}/{year}"));
+
+    [Fact]
+    public void Resolve_keeps_files_inside_the_root()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "sd-root");
+        Assert.Equal(Path.Combine(root, "Bills", "2026", "a.pdf"), AccountLocation.Resolve(root, "Bills/2026", "a.pdf"));
+        Assert.Throws<InvalidDataException>(() => AccountLocation.Resolve(root, "../outside", "a.pdf"));
+        Assert.Throws<InvalidDataException>(() => AccountLocation.Resolve(root + "-sibling", "..", Path.Combine("sd-root", "a.pdf")));
+        Assert.Throws<InvalidDataException>(() => AccountLocation.Resolve(root, Path.GetTempPath(), "a.pdf"));
     }
 }

@@ -54,6 +54,12 @@ public sealed class ScheduleState
     /// <summary>Expected date the overdue notice was sent for (so it's sent once per cycle).</summary>
     public DateOnly? OverdueNoticeFor { get; set; }
     public DateOnly? StaleNoticeFor { get; set; }
+    /// <summary>
+    /// When each configured action (by <see cref="ActionKeys"/>) was first seen. Actions only run on
+    /// documents found after that, so adding one doesn't replay it over the whole history.
+    /// Null until the first run with stable action keys.
+    /// </summary>
+    public Dictionary<string, DateTimeOffset>? ActionsSince { get; set; }
 }
 
 public enum PlannedRun { None, SignInOnly, FullCheck }
