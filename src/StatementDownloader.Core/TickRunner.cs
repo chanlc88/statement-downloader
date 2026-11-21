@@ -73,6 +73,18 @@ public sealed class TickRunner(
     {
         using var runLock = TryLock(wait: TimeSpan.FromMinutes(15)) ?? throw new InvalidOperationException("Another run is in progress; try again shortly.");
         var report = await runner.RunAsync(account, RunMode.Full, interactive, ct, capture);
+        // Accounts on the same login are fetched in the same go: the sign-in just made covers them.
+        if (report.Auth is AuthStatus.Healthy or AuthStatus.ExpiringSoon)
+            foreach (var sibling in Logins.Siblings(config, account))
+            {
+                var r = await runner.RunAsync(sibling, RunMode.Full, interactive && runner.NeedsPerson(sibling), ct, capture);
+                report = report with
+                {
+                    NewDocuments = report.NewDocuments + r.NewDocuments,
+                    ActionsFailed = report.ActionsFailed + r.ActionsFailed,
+                    Summary = $"{report.Summary} {sibling.DisplayName}: {r.Summary}",
+                };
+            }
         await notify.SendDueAsync(ct);
         return report;
     }

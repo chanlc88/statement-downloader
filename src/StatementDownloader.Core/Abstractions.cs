@@ -57,6 +57,8 @@ public interface ISiteFetcher
 {
     string SiteId { get; }
     string DisplayName { get; }
+    /// <summary>The site is only visited with the person present (assisted every time).</summary>
+    bool NeedsPerson => false;
     Task<SiteResult> RunAsync(SiteContext context, CancellationToken ct = default);
 }
 

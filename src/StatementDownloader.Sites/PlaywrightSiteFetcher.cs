@@ -34,32 +34,48 @@ public abstract class PlaywrightSiteFetcher : ISiteFetcher
 
     /// <summary>The site refuses unattended browsers; only visit it in a visible window with the person present.</summary>
     protected virtual bool AttendedOnly => false;
+    /// <summary>
+    /// Sign-in happens in a regular browser window (Edge or Chrome, with its own profile) that the
+    /// person signs in to; the app connects to it afterwards. For sites whose bot check refuses
+    /// automated browsers even with the person present. Implies <see cref="AttendedOnly"/>.
+    /// </summary>
+    protected virtual bool YourBrowser => false;
+    public bool NeedsPerson => AttendedOnly || YourBrowser;
 
     public async Task<SiteResult> RunAsync(SiteContext ctx, CancellationToken ct = default)
     {
         // Don't keep knocking on a site that blocks unattended browsers: ask the person instead.
-        if (AttendedOnly && !ctx.Interactive)
+        if ((AttendedOnly || YourBrowser) && !ctx.Interactive)
             return SiteResult.AuthFailed(AuthFailureReason.AttendedOnly, null);
 
         using var playwright = await Playwright.CreateAsync();
         Directory.CreateDirectory(ctx.ProfileDir);
-        await using var browser = await playwright.Chromium.LaunchPersistentContextAsync(ctx.ProfileDir, new BrowserTypeLaunchPersistentContextOptions
+        BrowserSession session;
+        try
         {
-            Headless = !ctx.Interactive,
-            AcceptDownloads = true,
-            ViewportSize = new ViewportSize { Width = 1280, Height = 900 },
-        });
-        var page = browser.Pages.FirstOrDefault() ?? await browser.NewPageAsync();
+            session = YourBrowser
+                ? await BrowserSession.YoursAsync(playwright, ctx.ProfileDir, StartUrl, ct)
+                : await BrowserSession.AutomatedAsync(playwright, ctx.ProfileDir, headless: !ctx.Interactive);
+        }
+        catch (Exception ex) when (ex is PlaywrightException or TimeoutException or InvalidOperationException)
+        {
+            return SiteResult.AuthFailed(AuthFailureReason.SiteUnavailable, ex.Message);
+        }
+        await using var _ = session;
+        var browser = session.Context;
+        var page = session.Page;
 
         try
         {
             // "Load", not "NetworkIdle": chat widgets and analytics keep many sites from ever going idle.
-            await page.GotoAsync(StartUrl, new PageGotoOptions { WaitUntil = WaitUntilState.Load, Timeout = 60_000 });
+            // Your own browser was opened on the start page already; reloading would restart its bot check.
+            if (!YourBrowser) await page.GotoAsync(StartUrl, new PageGotoOptions { WaitUntil = WaitUntilState.Load, Timeout = 60_000 });
             await SettleAsync(page);
             await WaitForPageReadyAsync(page, ct);
         }
         catch (Exception ex) when (ex is PlaywrightException or TimeoutException)
         {
+            if (ctx.Interactive && page.IsClosed) return SiteResult.AuthFailed(AuthFailureReason.AssistAbandoned, "The browser window was closed.");
             return SiteResult.AuthFailed(AuthFailureReason.SiteUnavailable, ex.Message, await SaveDiagnosticsAsync(page, ctx, "unreachable"));
         }
 

@@ -43,6 +43,12 @@ public sealed class SignInRecipe
     /// with the person present, and a due check becomes a "Sign in now" request instead.
     /// </summary>
     public bool Attended { get; set; }
+    /// <summary>
+    /// Sign in in a regular Edge/Chrome window (its own profile) instead of the app's browser, for
+    /// sites whose bot check refuses automated browsers even with you present. The app connects
+    /// to that window once you're signed in and does the rest. Implies attended.
+    /// </summary>
+    public bool YourBrowser { get; set; }
     /// <summary>Page to open first; shows the sign-in form or, when remembered, the signed-in page.</summary>
     public string Url { get; set; } = "";
     public string Username { get; set; } = "";
@@ -240,6 +246,8 @@ public static class RecipeLoader
         Need(r.SignIn.Password, "signIn.password");
         Need(r.SignIn.Submit, "signIn.submit");
         Need(r.SignIn.SignedIn, "signIn.signedIn");
+        Need(r.Documents.List.Rows, "documents.list.rows");
+        Field(r.Documents.List.Date, "documents.list.date", required: true);
 
         foreach (var (s, i) in r.Documents.Steps.Select((s, i) => (s, i + 1)))
         {
@@ -250,10 +258,8 @@ public static class RecipeLoader
             foreach (var name in RecipeOptions.Names(s.Click, s.Goto, s.WaitFor, s.Frame))
                 if (!r.Options.ContainsKey(name)) e.Add($"documents.steps[{i}] uses {{{name}}}, which isn't listed under options.");
         }
-        Need(r.Documents.List.Rows, "documents.list.rows");
         Duration(r.Documents.List.Wait, "documents.list.wait");
         Duration(r.Documents.FirstRunLookback, "documents.firstRunLookback");
-        Field(r.Documents.List.Date, "documents.list.date", required: true);
         if (r.Documents.List.Amount is { } amount) Field(amount, "documents.list.amount", required: false);
         Regex1(r.Documents.List.Link.Pattern, "documents.list.link.pattern");
         if (r.Documents.Download is not ("fetch" or "click" or "popup")) e.Add("documents.download must be fetch, click or popup.");

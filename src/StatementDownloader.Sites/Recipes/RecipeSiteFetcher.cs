@@ -14,6 +14,7 @@ public sealed class RecipeSiteFetcher(SiteRecipe recipe) : PlaywrightSiteFetcher
     protected override string StartUrl => recipe.SignIn.Url;
     protected override IReadOnlyCollection<string>? SignInCookieNames => recipe.SignIn.RememberCookies;
     protected override bool AttendedOnly => recipe.SignIn.Attended;
+    protected override bool YourBrowser => recipe.SignIn.YourBrowser;
 
     private SignInRecipe S => recipe.SignIn;
 
@@ -119,6 +120,9 @@ public sealed class RecipeSiteFetcher(SiteRecipe recipe) : PlaywrightSiteFetcher
                 continue;
             }
             if (parsed.StatementNumber is { } sn && known.Contains(sn)) { File.Delete(path); continue; }
+            // Without a number, the date printed on the document identifies it (the list's date can
+            // differ from it, e.g. bill date vs. end of the billing period).
+            if (parsed.StatementNumber is null && ctx.Known.Any(k => k.DocumentDate == parsed.DocumentDate)) { File.Delete(path); continue; }
             found.Add(new FoundDocument
             {
                 TempPath = path,
@@ -148,7 +152,17 @@ public sealed class RecipeSiteFetcher(SiteRecipe recipe) : PlaywrightSiteFetcher
                 await SettleAsync(page);
             }
             else
-                await In(page, step.Frame, step.WaitFor!).First.WaitForAsync(new LocatorWaitForOptions { Timeout = timeout });
+            {
+                var target = In(page, step.Frame, step.WaitFor!).First;
+                try { await target.WaitForAsync(new LocatorWaitForOptions { Timeout = timeout }); }
+                catch (TimeoutException)
+                {
+                    // Some sites show a passing "something went wrong, refresh" page: reload once and look again.
+                    await page.ReloadAsync(new PageReloadOptions { WaitUntil = WaitUntilState.Load, Timeout = timeout });
+                    await SettleAsync(page);
+                    await target.WaitForAsync(new LocatorWaitForOptions { Timeout = timeout });
+                }
+            }
         }
         catch (TimeoutException) { throw new SiteLayoutException($"Step {number} ({what}) failed: not found within {step.Timeout}."); }
     }

@@ -144,11 +144,17 @@ function windowText(a) {
   return `${day(e.windowStart)} – ${day(e.windowEnd)} <span class="muted">(~every ${e.intervalDays}d ±${e.spreadDays})</span>`;
 }
 
+/** "Same sign-in as …" for accounts that share a login: one sign-in covers them all. */
+const sharedHtml = a => (a.sharesSignInWith || []).length
+  ? `<div class="row"><span>Shared login</span><span class="muted" title="One sign-in covers these accounts; Sign in now fetches them all">Same sign-in as ${esc(a.sharesSignInWith.join(", "))}</span></div>`
+  : "";
+
 function card(a) {
   return `<div class="card">
     <h2><a href="/accounts/${a.id}" data-nav>${esc(a.name)}</a></h2>
     <div class="muted" style="margin-bottom:8px">${esc(a.site)} · ${esc(a.kind)}s${tagsHtml(a.tags)}</div>
     <div class="row"><span>Sign-in</span><span class="pill s-${a.auth.status}">${statusText[a.auth.status] || a.auth.status}</span></div>
+    ${sharedHtml(a)}
     <div class="row"><span>Last ${esc(a.kind)}</span><span>${a.lastDocument ? `${day(a.lastDocument.date)} · ${money(a.lastDocument.amount)}` : "none yet"}</span></div>
     <div class="row"><span>Next expected</span><span>${windowText(a)}</span></div>
     <div class="row"><span>Now</span><span>${phaseText[a.decision.phase] || a.decision.phase} <span class="muted">— ${esc(a.decision.reason)}</span></span></div>
@@ -289,6 +295,7 @@ function listHtml() {
 
 function rowHtml(a) {
   return `<div class="lmain"><b>${esc(a.name)}</b> <span class="muted">${esc(a.site)}</span>${tagsHtml(a.tags)}
+      ${(a.sharesSignInWith || []).length ? `<span class="muted" style="font-size:12.5px"> · same sign-in as ${esc(a.sharesSignInWith.join(", "))}</span>` : ""}
       <div class="path" title="${esc(a.example)}">${esc(a.relative)}</div></div>
     <button onclick="editAccount('${esc(a.id)}')">Edit</button>`;
 }

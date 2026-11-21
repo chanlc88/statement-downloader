@@ -16,8 +16,8 @@ especially when a site needs you to sign in.
   [run your own script](docs/functional-spec.md#53-actions) — for example one that
   records the bill in your accounting system.
 
-> Status: early. Four site recipes so far (Chase statements, DeKalb County water and SCANA Energy gas in
-> Georgia, and Republic Services waste), verified against the live sites. See [docs/](docs/) for the spec, architecture and recipe format.
+> Status: early. Five site recipes so far (Chase statements; DeKalb County water, Georgia Power and
+> SCANA Energy gas in Georgia; and Republic Services waste), verified against the live sites. See [docs/](docs/) for the spec, architecture and recipe format.
 
 ## Quick start
 

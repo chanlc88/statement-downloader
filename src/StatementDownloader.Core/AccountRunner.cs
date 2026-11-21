@@ -33,9 +33,19 @@ public sealed class AccountRunner(
     public static string ExpiringIssueKey(string id) => $"expiring:{id}";
     public static string DocumentIssueKey(string id) => $"documents:{id}";
 
+    /// <summary>Accounts on one login share their sign-in notifications.</summary>
+    private string SignInIssueId(AccountConfig account) =>
+        Logins.Siblings(config, account).Count == 0 ? account.Id : Logins.Id(account);
+
+    /// <summary>The account's site is only visited with the person present.</summary>
+    public bool NeedsPerson(AccountConfig account) => sites.TryGetValue(account.Site, out var s) && s.NeedsPerson;
+
     public async Task<RunReport> RunAsync(AccountConfig account, RunMode mode, bool interactive = false, CancellationToken ct = default, bool capture = false)
     {
         var now = clock.GetUtcNow();
+        if (!sites.TryGetValue(account.Site, out var site))
+            return new(account.Id, AuthStatus.Unknown, 0, 0, $"Unknown site '{account.Site}'.");
+
         var state = AuthTransitions.CheckExpiry(await auth.GetAsync(account.Id, ct), now, ExpiryWarning);
 
         if (!interactive && state.Status == AuthStatus.NeedsAssist)
@@ -44,9 +54,6 @@ public sealed class AccountRunner(
             await RaiseAuthIssueAsync(account, state, ct);
             return new(account.Id, state.Status, 0, 0, "Waiting for an assisted sign-in.");
         }
-
-        if (!sites.TryGetValue(account.Site, out var site))
-            return new(account.Id, state.Status, 0, 0, $"Unknown site '{account.Site}'.");
 
         var sched = await schedule.GetAsync(account.Id, ct);
         sched.LastSignInAttemptUtc = now;
@@ -73,7 +80,7 @@ public sealed class AccountRunner(
                 {
                     Account = account,
                     Credential = credential,
-                    ProfileDir = paths.ProfileDir(account.Id),
+                    ProfileDir = Logins.ProfileDir(paths, config, account),
                     WorkDir = workDir,
                     DiagnosticsDir = paths.DiagnosticsDir(account.Id),
                     Known = known,
@@ -95,8 +102,15 @@ public sealed class AccountRunner(
             state = AuthTransitions.Succeeded(state, now, result.RememberedUntilUtc, ExpiryWarning);
             await auth.SaveAsync(state, ct);
             await auth.AppendEventAsync(new AuthEvent { AccountId = account.Id, AtUtc = now, Succeeded = true, Assisted = interactive, RememberedUntilUtc = state.RememberedUntilUtc }, ct);
-            await notify.ResolveAsync(AuthIssueKey(account.Id), $"{account.DisplayName} is signed in again.", ct);
+            await notify.ResolveAsync(AuthIssueKey(SignInIssueId(account)), $"{Logins.Label(config, account)}: signed in again.", ct);
+            if (SignInIssueId(account) != account.Id) await notify.ResolveAsync(AuthIssueKey(account.Id), null, ct);
             await UpdateExpiryIssueAsync(account, state, ct);
+            // The other accounts on this login share the browser profile, so they're signed in too.
+            foreach (var sibling in Logins.Siblings(config, account))
+            {
+                await auth.SaveAsync(AuthTransitions.Succeeded(await auth.GetAsync(sibling.Id, ct), now, result.RememberedUntilUtc, ExpiryWarning), ct);
+                await notify.ResolveAsync(AuthIssueKey(sibling.Id), null, ct);
+            }
 
             if (result.DocumentError is not null)
             {
@@ -145,33 +159,9 @@ public sealed class AccountRunner(
         var existing = (await documents.GetAsync(account.Id, ct)).FirstOrDefault(d => d.Sha256 == filed.Sha256);
         if (existing is not null) return null;
 
-        var record = new DocumentRecord
-        {
-            AccountId = account.Id,
-            Kind = account.Kind,
-            DocumentDate = found.DocumentDate,
-            StatementNumber = found.StatementNumber,
-            Amount = found.Amount,
-            VendorAccountNumber = found.VendorAccountNumber,
-            Path = filed.Path,
-            Sha256 = filed.Sha256,
-            FirstSeenUtc = now,
-            Review = account.Review && account.Actions.Count > 0 ? ReviewState.Pending : ReviewState.None,
-        };
-        await documents.AddAsync(record, ct);
+        var record = await AddAndAnnounceAsync(account, found, filed.Path, filed.Sha256, now,
+            filed.Outcome == FileOutcome.AlreadyOnDisk ? "It was already in the folder" : $"Saved to {filed.Path}", ct);
         known.Add(new KnownDocument(record.DocumentDate, record.StatementNumber));
-
-        var amount = record.Amount is { } a ? $" for {a.ToString("C", CultureInfo.GetCultureInfo("en-US"))}" : "";
-        var where = filed.Outcome == FileOutcome.AlreadyOnDisk ? "It was already in the folder" : $"Saved to {filed.Path}";
-        var review = record.Review == ReviewState.Pending ? " It's waiting for your review before any actions run." : "";
-        await notify.NotifyAsync(new Notification
-        {
-            Level = NotificationLevel.Info,
-            AccountId = account.Id,
-            Title = $"New {account.KindWord} from {account.DisplayName}",
-            Message = $"Dated {record.DocumentDate:yyyy-MM-dd}{amount}. {where}.{review}",
-            Link = record.Review == ReviewState.Pending ? links.Review : links.Account(account.Id),
-        }, ct);
 
         if (filed.Outcome == FileOutcome.NameClash)
             await notify.RaiseAsync($"clash:{record.Id}", new Notification
@@ -182,6 +172,37 @@ public sealed class AccountRunner(
                 Message = $"A different file already had this {account.KindWord}'s name, so it was saved as {Path.GetFileName(filed.Path)}. Check which one is right.",
                 Link = links.Account(account.Id),
             }, ct);
+        return record;
+    }
+
+    /// <summary>Records a new document (waiting for review when the account asks) and tells the person.</summary>
+    private async Task<DocumentRecord> AddAndAnnounceAsync(AccountConfig account, FoundDocument found, string path, string sha256, DateTimeOffset now, string where, CancellationToken ct)
+    {
+        var record = new DocumentRecord
+        {
+            AccountId = account.Id,
+            Kind = account.Kind,
+            DocumentDate = found.DocumentDate,
+            StatementNumber = found.StatementNumber,
+            Amount = found.Amount,
+            VendorAccountNumber = found.VendorAccountNumber,
+            Path = path,
+            Sha256 = sha256,
+            FirstSeenUtc = now,
+            Review = account.Review && account.Actions.Count > 0 ? ReviewState.Pending : ReviewState.None,
+        };
+        await documents.AddAsync(record, ct);
+
+        var amount = record.Amount is { } a ? $" for {a.ToString("C", CultureInfo.GetCultureInfo("en-US"))}" : "";
+        var review = record.Review == ReviewState.Pending ? " It's waiting for your review before any actions run." : "";
+        await notify.NotifyAsync(new Notification
+        {
+            Level = NotificationLevel.Info,
+            AccountId = account.Id,
+            Title = $"New {account.KindWord} from {account.DisplayName}",
+            Message = $"Dated {record.DocumentDate:yyyy-MM-dd}{amount}. {where}.{review}",
+            Link = record.Review == ReviewState.Pending ? links.Review : links.Account(account.Id),
+        }, ct);
         return record;
     }
 
@@ -201,11 +222,13 @@ public sealed class AccountRunner(
         var waiting = needsYou ? $" Any new {account.KindWord}s are fetched right after you sign in." : "";
         var diag = diagnostics is null ? "" : $" Screenshot: {diagnostics}.";
         var detail = !needsYou && !string.IsNullOrWhiteSpace(state.LastFailureDetail) ? $" Details: {state.LastFailureDetail}" : "";
-        return notify.RaiseAsync(AuthIssueKey(account.Id), new Notification
+        // One notification per login: accounts sharing a sign-in don't each ask.
+        var who = Logins.Label(config, account);
+        return notify.RaiseAsync(AuthIssueKey(SignInIssueId(account)), new Notification
         {
             Level = NotificationLevel.ActionNeeded,
             AccountId = account.Id,
-            Title = needsYou ? $"{account.DisplayName} needs you to sign in" : $"{account.DisplayName} can't sign in",
+            Title = needsYou ? $"{who} needs you to sign in" : $"{who} can't sign in",
             Message = $"{Capitalize(what)}. {todo}{waiting}{detail}{diag}",
             Link = needsYou ? links.Assist(account.Id) : links.Account(account.Id),
         }, ct);
@@ -214,12 +237,12 @@ public sealed class AccountRunner(
     private Task UpdateExpiryIssueAsync(AccountConfig account, VendorAuthState state, CancellationToken ct)
     {
         if (state.Status != AuthStatus.ExpiringSoon || state.RememberedUntilUtc is not { } until)
-            return notify.ResolveAsync(ExpiringIssueKey(account.Id), null, ct);
-        return notify.RaiseAsync(ExpiringIssueKey(account.Id), new Notification
+            return notify.ResolveAsync(ExpiringIssueKey(SignInIssueId(account)), null, ct);
+        return notify.RaiseAsync(ExpiringIssueKey(SignInIssueId(account)), new Notification
         {
             Level = NotificationLevel.HeadsUp,
             AccountId = account.Id,
-            Title = $"{account.DisplayName}: sign-in expires soon",
+            Title = $"{Logins.Label(config, account)}: sign-in expires soon",
             Message = $"The remembered sign-in lapses on {until.ToLocalTime():yyyy-MM-dd}. Sign in now (and tick \"remember me\") to avoid being asked when a {account.KindWord} is due.",
             Link = links.Assist(account.Id),
         }, ct);

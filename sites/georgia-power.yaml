@@ -1,0 +1,77 @@
+# Georgia Power — Georgia electric utility (customerservice2.southerncompany.com).
+# Format: docs/site-recipes.md. Regexes are written in 'single quotes' so backslashes stay as-is.
+id: georgia-power
+name: Georgia Power (GA electric)
+kind: bill
+region: US-GA
+website: https://www.georgiapower.com
+verified: 2026-11-20
+notes: >
+  Sign-in is behind an Imperva bot check ("I am human" hCaptcha) that refuses automated
+  browsers even with you present, so this recipe uses yourBrowser: SD opens a regular Edge or
+  Chrome window, you pass the check and sign in, and SD takes over from there. One login can
+  hold several accounts: set siteOptions.account to the account number as the site shows it
+  (12345-67890) — one SD account per Georgia Power account. History lists bills and payments;
+  each bill's PDF icon ("View Paper Bill") opens the PDF in a new window. Bills are dated here by the end of the
+  billing period (the bill date on the site is usually the next day). Amount is this bill's
+  charges ("Total Current Electric Service"); Total Due can include an unpaid previous bill.
+
+options:
+  account: Account number as the site shows it, e.g. 12345-67890, when the login has several.
+
+signIn:
+  url: https://customerservice2.southerncompany.com/Login?mnuOpco=GPC
+  username: 'input[name=callback_1]'
+  password: 'input[name=callback_2]'
+  submit: "button[aria-label='Log In']"
+  signedIn: 'a:text-is("Logout")'
+  yourBrowser: true
+
+documents:
+  steps:
+    - goto: /Billing/BillHistory?mnuOpco=GPC
+    - waitFor: 'ng-select.occ-account-dropdown'
+    - click: 'ng-select.occ-account-dropdown .ng-select-container'
+      ifOption: account
+    - click: ".ng-option:has-text('{account}')"
+      ifOption: account
+    # Switching reloads the site (sometimes onto an error page); open History again.
+    - goto: /Billing/BillHistory?mnuOpco=GPC
+      ifOption: account
+    - waitFor: "ng-select.occ-account-dropdown:has-text('{account}')"
+      ifOption: account
+      timeout: 60s
+  list:
+    rows: "tr.k-master-row:has(a[title='View Paper Bill'])"
+    date: { column: 2 }
+    amount: { selector: 'td:last-child', pattern: '\$([\d,]+\.\d{2})' }
+    link: { selector: "a[title='View Paper Bill']" }
+  download: popup
+
+parse:
+  require: 'georgiapower\.com'
+  # End of the billing period. Newer bills: "Billing Period: Oct 7, 2026 - Nov 3, 2026";
+  # older ones: "Billing Period May 4, 2026 - June 3, 2026".
+  date: 'Billing Period:? [A-Z][a-z]+ \d{1,2}, \d{4} - ([A-Z][a-z]+ \d{1,2}, \d{4})'
+  dateFormats: ['MMM d, yyyy', 'MMMM d, yyyy']
+  accountNumber: '(\d{5}-\d{5})'
+  amount: 'Total Current Electric Service \$ ([\d,]+\.\d{2})'
+
+# Checked by the test suite. Made-up numbers only; text is in the order `pdf-text` prints it.
+tests:
+  documents:
+    - text: >-
+        georgiapower.com Account Number 12345-67890 Please Pay By Nov 25, 2026 Total Due $ 210.00
+        Billing Summary Previous Bill Amount $ 100.00 Payment Received On 10/24/26 -100.00
+        Current Electric Service + 110.00 Billing Period: Oct 7, 2026 - Nov 3, 2026 Current Service $ 90.00
+        Sales Tax 5.00 Total Current Electric Service $ 110.00 Total Due $ 110.00
+      expect: { date: 2026-11-03, amount: 110.00, accountNumber: '12345-67890' }
+    - text: >-
+        georgiapower.com 12345-67890 Total Due $ 1,170.62 Past Due Electric Service Billing Period May 4, 2026 -
+        June 3, 2026 Current Service $ 475.48 Total Current Electric Service $ 583.17
+      expect: { date: 2026-06-03, amount: 583.17, accountNumber: '12345-67890' }
+    - text: 'SCANA Energy Billing Period: Oct 7, 2026 - Nov 3, 2026 Total Current Electric Service $ 5.00'
+      expect: null
+  rows:
+    - cells: ['', '11/04/2026', 'Bill View Bill', '1535 kWh', '$426.30']
+      expect: { date: 2026-11-04, url: '' }

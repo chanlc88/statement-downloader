@@ -57,7 +57,7 @@ public static class WebUi
             {
                 machine = Environment.MachineName,
                 documentsRoot = s.Config.DocumentsRoot,
-                accounts = statuses.Select(st => AccountView(st, runs)),
+                accounts = statuses.Select(st => AccountView(st, runs, s.Config)),
             });
         });
 
@@ -69,7 +69,7 @@ public static class WebUi
             var events = await s.Auth.GetEventsAsync(id, ct);
             return Results.Ok(new
             {
-                account = AccountView(st, runs),
+                account = AccountView(st, runs, s.Config),
                 documents = docs.OrderByDescending(d => d.DocumentDate).Select(d => new { d.Id, date = d.DocumentDate, d.StatementNumber, d.Amount, d.Path, d.Imported, d.FirstSeenUtc, review = d.Review, actions = d.Actions }),
                 signIns = events.OrderByDescending(e => e.AtUtc).Take(50),
             });
@@ -211,7 +211,7 @@ public static class WebUi
         foreach (var a in s.Config.Accounts)
         {
             var example = await ExamplePathAsync(s, a, s.Config.DocumentsRoot, a.Folder, a.FileName, ct);
-            accounts.Add(new { a.Id, name = a.DisplayName, a.Site, group = a.Group, tags = a.Tags, a.Folder, a.FileName, example, relative = Relative(s.Config.DocumentsRoot, example) });
+            accounts.Add(new { a.Id, name = a.DisplayName, a.Site, group = a.Group, tags = a.Tags, sharesSignInWith = Logins.Siblings(s.Config, a).Select(x => x.DisplayName), a.Folder, a.FileName, example, relative = Relative(s.Config.DocumentsRoot, example) });
         }
         return new
         {
@@ -255,7 +255,7 @@ public static class WebUi
         return Results.Accepted(value: new { started = true });
     }
 
-    private static object AccountView(AccountStatus st, RunTracker runs)
+    private static object AccountView(AccountStatus st, RunTracker runs, AppConfig config)
     {
         var a = st.Account;
         return new
@@ -275,6 +275,8 @@ public static class WebUi
             lastDocument = st.LastDocument is { } d ? new { date = d.DocumentDate, d.Amount, d.StatementNumber } : null,
             documentCount = st.DocumentCount,
             issues = st.OpenIssues,
+            // Other accounts signed in with the same login (same site and credential).
+            sharesSignInWith = Logins.Siblings(config, a).Select(x => x.DisplayName),
             running = runs.Running.TryGetValue(a.Id, out var r) ? r.Kind : null,
             lastRun = runs.LastReports.TryGetValue(a.Id, out var rep) ? rep.Summary : null,
         };

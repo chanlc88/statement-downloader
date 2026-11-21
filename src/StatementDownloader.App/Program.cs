@@ -127,6 +127,7 @@ try
                 if (command == "assist") Console.WriteLine("A browser window will open. Finish signing in there (code, CAPTCHA, \"remember me\"); this waits up to 10 minutes.");
                 var capture = argList.Contains("--capture");
                 var r = await services.Ticks.RunNowAsync(account, interactive: command == "assist", capture: capture);
+                StatementDownloader.Sites.BrowserSession.CloseKeptWindows();
                 if (capture) Console.WriteLine($"Page snapshots: {services.Paths.DiagnosticsDir(account.Id)}");
                 Console.WriteLine($"{r.AccountId}: {r.Summary}");
                 return r.Auth is AuthStatus.Healthy or AuthStatus.ExpiringSoon ? 0 : 2;
