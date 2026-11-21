@@ -79,6 +79,11 @@ public sealed class DocumentsRecipe
 public sealed class StepRecipe
 {
     public string? Click { get; set; }
+    /// <summary>
+    /// Activates a link that is in the page but not shown (in a collapsed menu) by sending it a
+    /// click event, as the site's own menu would. Use for in-app (router) links.
+    /// </summary>
+    public string? Follow { get; set; }
     public string? Goto { get; set; }
     public string? WaitFor { get; set; }
     /// <summary>Selector of the iframe the step's element is in.</summary>
@@ -251,11 +256,11 @@ public static class RecipeLoader
 
         foreach (var (s, i) in r.Documents.Steps.Select((s, i) => (s, i + 1)))
         {
-            var actions = new[] { s.Click, s.Goto, s.WaitFor }.Count(x => !string.IsNullOrWhiteSpace(x));
-            if (actions != 1) e.Add($"documents.steps[{i}] needs exactly one of click, goto or waitFor.");
+            var actions = new[] { s.Click, s.Follow, s.Goto, s.WaitFor }.Count(x => !string.IsNullOrWhiteSpace(x));
+            if (actions != 1) e.Add($"documents.steps[{i}] needs exactly one of click, follow, goto or waitFor.");
             Duration(s.Timeout, $"documents.steps[{i}].timeout");
             if (s.IfOption is { } io && !r.Options.ContainsKey(io)) e.Add($"documents.steps[{i}].ifOption '{io}' isn't listed under options.");
-            foreach (var name in RecipeOptions.Names(s.Click, s.Goto, s.WaitFor, s.Frame))
+            foreach (var name in RecipeOptions.Names(s.Click, s.Follow, s.Goto, s.WaitFor, s.Frame))
                 if (!r.Options.ContainsKey(name)) e.Add($"documents.steps[{i}] uses {{{name}}}, which isn't listed under options.");
         }
         Duration(r.Documents.List.Wait, "documents.list.wait");

@@ -130,7 +130,7 @@ browser to you (assisted sign-in). It never tries to get past them itself.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `steps` | none | Done in order after signing in to reach the list. Each step is one of `click: <selector>`, `goto: <url, may be relative>`, `waitFor: <selector>`, with optional `frame: <iframe selector>`, `timeout` (default `30s`) and `ifOption: <name>` (run only when the account sets that option). |
+| `steps` | none | Done in order after signing in to reach the list. Each step is one of `click: <selector>`, `follow: <selector>` (activate a link that's in the page but hidden in a collapsed menu, as the site's own menu would — for in-app links), `goto: <url, may be relative>`, `waitFor: <selector>` (if it doesn't appear, the page is refreshed up to three times and checked again), with optional `frame: <iframe selector>`, `timeout` (default `30s`) and `ifOption: <name>` (run only when the account sets that option). |
 | `list.rows` | required | One element per document, usually `table tbody tr`. |
 | `list.frame` | | The iframe the list is in. |
 | `list.wait` | `30s` | How long to wait for the first row. |

@@ -40,12 +40,17 @@ public sealed class BrowserSession : IAsyncDisposable
         if (!await IsListeningAsync(port))
         {
             var exe = FindBrowser() ?? throw new InvalidOperationException("No Microsoft Edge or Google Chrome was found to open for signing in.");
-            var psi = new ProcessStartInfo(exe) { UseShellExecute = false };
+            // Its own console output (sync, extension and update chatter) isn't ours to log.
+            var psi = new ProcessStartInfo(exe) { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
             foreach (var arg in new[] { $"--remote-debugging-port={port}", "--remote-debugging-address=127.0.0.1", $"--user-data-dir={profileDir}-browser",
                                         "--no-first-run", "--no-default-browser-check", "--new-window", url })
                 psi.ArgumentList.Add(arg);
             // The browser may relaunch itself, so the started process isn't tracked: it's closed through its port.
-            using var _ = Process.Start(psi) ?? throw new InvalidOperationException($"Could not start {exe}.");
+            var started = Process.Start(psi) ?? throw new InvalidOperationException($"Could not start {exe}.");
+            started.OutputDataReceived += (_, _) => { };
+            started.ErrorDataReceived += (_, _) => { };
+            started.BeginOutputReadLine();
+            started.BeginErrorReadLine();
         }
 
         IBrowser? browser = null;

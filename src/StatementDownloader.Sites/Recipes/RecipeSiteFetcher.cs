@@ -53,6 +53,7 @@ public sealed class RecipeSiteFetcher(SiteRecipe recipe) : PlaywrightSiteFetcher
             await RunStepAsync(page, new StepRecipe
             {
                 Click = RecipeOptions.Fill(step.Click, options, ctx.Account.Id),
+                Follow = RecipeOptions.Fill(step.Follow, options, ctx.Account.Id),
                 Goto = RecipeOptions.Fill(step.Goto, options, ctx.Account.Id),
                 WaitFor = RecipeOptions.Fill(step.WaitFor, options, ctx.Account.Id),
                 Frame = RecipeOptions.Fill(step.Frame, options, ctx.Account.Id),
@@ -138,7 +139,7 @@ public sealed class RecipeSiteFetcher(SiteRecipe recipe) : PlaywrightSiteFetcher
     private static async Task RunStepAsync(IPage page, StepRecipe step, int number)
     {
         var timeout = Ms(step.Timeout);
-        var what = step.Click is { } c ? $"click {c}" : step.Goto is { } g ? $"go to {g}" : $"wait for {step.WaitFor}";
+        var what = step.Click is { } c ? $"click {c}" : step.Follow is { } f ? $"follow {f}" : step.Goto is { } g ? $"go to {g}" : $"wait for {step.WaitFor}";
         try
         {
             if (step.Goto is { } url)
@@ -151,16 +152,28 @@ public sealed class RecipeSiteFetcher(SiteRecipe recipe) : PlaywrightSiteFetcher
                 await In(page, step.Frame, click).First.ClickAsync(new LocatorClickOptions { Timeout = timeout });
                 await SettleAsync(page);
             }
+            else if (step.Follow is { } follow)
+            {
+                // Present in the page but maybe hidden in a collapsed menu: send the click event directly.
+                await In(page, step.Frame, follow).First.DispatchEventAsync("click", null, new LocatorDispatchEventOptions { Timeout = timeout });
+                await SettleAsync(page);
+            }
             else
             {
                 var target = In(page, step.Frame, step.WaitFor!).First;
                 try { await target.WaitForAsync(new LocatorWaitForOptions { Timeout = timeout }); }
                 catch (TimeoutException)
                 {
-                    // Some sites show a passing "something went wrong, refresh" page: reload once and look again.
-                    await page.ReloadAsync(new PageReloadOptions { WaitUntil = WaitUntilState.Load, Timeout = timeout });
-                    await SettleAsync(page);
-                    await target.WaitForAsync(new LocatorWaitForOptions { Timeout = timeout });
+                    // Some sites show a passing "something went wrong, refresh" page: refresh and look
+                    // again, a few times, pausing in between.
+                    for (var attempt = 1; ; attempt++)
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(3 * attempt));
+                        await page.ReloadAsync(new PageReloadOptions { WaitUntil = WaitUntilState.Load, Timeout = timeout });
+                        await SettleAsync(page);
+                        try { await target.WaitForAsync(new LocatorWaitForOptions { Timeout = timeout }); break; }
+                        catch (TimeoutException) when (attempt < 3) { }
+                    }
                 }
             }
         }

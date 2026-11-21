@@ -29,17 +29,20 @@ signIn:
 
 documents:
   steps:
-    - goto: /Billing/BillHistory?mnuOpco=GPC
+    # Move around with the site's own menu links (in-app navigation): opening addresses
+    # directly often lands on Georgia Power's "Oops! Something went wrong" page.
     - waitFor: 'ng-select.occ-account-dropdown'
+      timeout: 60s
     - click: 'ng-select.occ-account-dropdown .ng-select-container'
       ifOption: account
     - click: ".ng-option:has-text('{account}')"
       ifOption: account
-    # Switching reloads the site (sometimes onto an error page); open History again.
-    - goto: /Billing/BillHistory?mnuOpco=GPC
-      ifOption: account
+    # Switching accounts reloads the site.
     - waitFor: "ng-select.occ-account-dropdown:has-text('{account}')"
       ifOption: account
+      timeout: 60s
+    - follow: "a[href='/Billing/BillHistory']"
+    - waitFor: 'tr.k-master-row'
       timeout: 60s
   list:
     rows: "tr.k-master-row:has(a[title='View Paper Bill'])"
