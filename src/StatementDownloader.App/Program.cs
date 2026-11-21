@@ -95,6 +95,8 @@ try
             }
     }
 
+    // Before any logger is made: console loggers keep the output they were created with.
+    if (command == "serve" && argList.Contains("--hidden")) Install.RunHidden(paths.File("agent.log"));
     using var loggers = LoggerFactory.Create(b => b.AddSimpleConsole(o => o.SingleLine = true).SetMinimumLevel(LogLevel.Information));
     using var services = AppServices.Build(paths, loggers);
 
@@ -102,7 +104,6 @@ try
     {
         case "serve":
             {
-                if (argList.Contains("--hidden")) Install.RunHidden(services.Paths.File("agent.log"));
                 var app = WebUi.Build(services, []);
                 Console.WriteLine($"Statement Downloader running at {services.Links.Dashboard}");
                 await app.RunAsync();

@@ -93,6 +93,10 @@ public abstract class PlaywrightSiteFetcher : ISiteFetcher
         }
         catch (Exception ex) when (ex is SiteLayoutException or PlaywrightException or TimeoutException)
         {
+            // The window went away (closed by the person, or the browser restarted itself): nothing
+            // is wrong with the site, the check just didn't finish.
+            if (ctx.Interactive && page.IsClosed)
+                return SiteResult.AuthFailed(AuthFailureReason.AssistAbandoned, "The browser window was closed before the check finished.");
             ctx.Log.LogWarning(ex, "{Site}: signed in but getting documents failed", SiteId);
             return new SiteResult { SignedIn = true, RememberedUntilUtc = remembered, DocumentError = ex.Message, DiagnosticsPath = await SaveDiagnosticsAsync(page, ctx, "documents") };
         }

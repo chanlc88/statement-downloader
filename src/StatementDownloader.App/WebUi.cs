@@ -41,6 +41,8 @@ public static class WebUi
             o.SerializerOptions.DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull;
         });
         builder.Logging.AddSimpleConsole(o => o.SingleLine = true);
+        // Every UI request is logged at Information otherwise, burying the app's own messages.
+        builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
 
         var app = builder.Build();
         var html = LoadIndex().Replace("__UI_KEY__", services.UiKey);

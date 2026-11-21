@@ -42,6 +42,8 @@ public sealed class HeldNotification
     public Notification Notification { get; set; } = null!;
     public DateTimeOffset ReleaseAfterUtc { get; set; }
     public bool Digest { get; set; }
+    /// <summary>The issue it announces, if any: dropped if that issue is resolved before release.</summary>
+    public string? IssueKey { get; set; }
 }
 
 public sealed class NotificationLogEntry
@@ -94,20 +96,22 @@ public sealed class NotificationCenter(
             data.Issues.Add(new Issue { Key = key, Level = n.Level, AccountId = n.AccountId, Title = n.Title, Message = n.Message, Link = n.Link, OpenedUtc = now, LastSentUtc = now });
             return true;
         }, ct);
-        if (isNew) await NotifyAsync(n, ct);
+        if (isNew) await NotifyAsync(n, ct, key);
     }
 
     /// <summary>Resolves an open issue; sends an info notice if <paramref name="resolvedMessage"/> is given.</summary>
     public async Task ResolveAsync(string key, string? resolvedMessage = null, CancellationToken ct = default)
     {
         var now = clock.GetUtcNow();
-        var resolved = await JsonFile.UpdateAsync<NotificationData, Issue?>(FilePath, data =>
+        var (resolved, unannounced) = await JsonFile.UpdateAsync<NotificationData, (Issue?, bool)>(FilePath, data =>
         {
             var open = data.Issues.FirstOrDefault(i => i.Key == key && i.IsOpen);
             if (open is not null) open.ResolvedUtc = now;
-            return open;
+            // Still held (quiet hours): it was never sent, so neither it nor the "resolved" notice is.
+            var held = data.Held.RemoveAll(h => h.IssueKey == key) > 0;
+            return (open, held);
         }, ct);
-        if (resolved is not null && resolvedMessage is not null)
+        if (resolved is not null && resolvedMessage is not null && !unannounced)
             await NotifyAsync(new Notification { Level = NotificationLevel.Info, Title = "Resolved: " + resolved.Title, Message = resolvedMessage, AccountId = resolved.AccountId }, ct);
     }
 
@@ -132,7 +136,7 @@ public sealed class NotificationCenter(
         return results;
     }
 
-    public async Task NotifyAsync(Notification n, CancellationToken ct = default)
+    public async Task NotifyAsync(Notification n, CancellationToken ct = default, string? issueKey = null)
     {
         var now = clock.GetUtcNow();
         DateTimeOffset? holdUntil = null;
@@ -142,7 +146,7 @@ public sealed class NotificationCenter(
 
         if (holdUntil is { } until)
         {
-            await JsonFile.UpdateAsync<NotificationData>(FilePath, d => d.Held.Add(new HeldNotification { Notification = n, ReleaseAfterUtc = until, Digest = digest }), ct);
+            await JsonFile.UpdateAsync<NotificationData>(FilePath, d => d.Held.Add(new HeldNotification { Notification = n, ReleaseAfterUtc = until, Digest = digest, IssueKey = issueKey }), ct);
             log.LogInformation("Held notification until {Until}: {Title}", until, n.Title);
             return;
         }
@@ -165,7 +169,8 @@ public sealed class NotificationCenter(
                 var days = (int)(now - i.OpenedUtc).TotalDays;
                 due.Add(new Notification { Level = i.Level, Title = "Reminder: " + i.Title, Message = i.Message + (days >= 1 ? $" (open for {days} day{(days == 1 ? "" : "s")})" : ""), AccountId = i.AccountId, Link = i.Link });
             }
-            var rel = data.Held.Where(h => h.ReleaseAfterUtc <= now).ToList();
+            var rel = data.Held.Where(h => h.ReleaseAfterUtc <= now
+                                           && (h.IssueKey is null || data.Issues.Any(i => i.Key == h.IssueKey && i.IsOpen))).ToList();
             data.Held.RemoveAll(h => h.ReleaseAfterUtc <= now);
             return (due, rel);
         }, ct);

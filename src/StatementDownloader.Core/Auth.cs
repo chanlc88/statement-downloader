@@ -100,7 +100,7 @@ public static class AuthTransitions
         AuthFailureReason.VerificationCode => ("the site asked for a verification code", "Choose Sign in now and enter the code; tick \"remember this device\" if offered."),
         AuthFailureReason.Captcha => ("the site showed a CAPTCHA", "Choose Sign in now and complete it."),
         AuthFailureReason.SessionExpired => ("the remembered sign-in expired", "Choose Sign in now to sign in again and renew it."),
-        AuthFailureReason.AssistAbandoned => ("the sign-in window was closed before signing in finished", "Choose Sign in now to try again."),
+        AuthFailureReason.AssistAbandoned => ("the browser window was closed before signing in or the check finished", "Choose Sign in now to try again."),
         AuthFailureReason.PasswordRejected => ("the site rejected the username or password", "Update the login in your password manager, then choose Check now."),
         AuthFailureReason.SiteChanged => ("the site's pages no longer look as expected", "The site fetcher needs updating; a screenshot was saved to the diagnostics folder."),
         AuthFailureReason.SiteUnavailable => ("the site could not be reached or returned an error", "Nothing to do yet; it will retry on the next check."),
