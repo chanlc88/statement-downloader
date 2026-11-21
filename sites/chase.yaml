@@ -1,0 +1,73 @@
+# Chase — bank and credit card statements (chase.com).
+# Format: docs/site-recipes.md. Regexes are written in 'single quotes' so backslashes stay as-is.
+id: chase
+name: Chase (bank and credit card statements)
+kind: statement
+region: US
+website: https://www.chase.com
+verified: 2026-11-20
+notes: >
+  The sign-in form is inside an iframe (#logonbox). Chase sends unattended (headless)
+  browsers to a "System Requirements" page, and new devices get a one-time code, so this
+  recipe is attended: SD asks you to choose Sign in now, fills the login, and you enter any
+  code. One login shows every account: set siteOptions.account to the label in the
+  Statements and Documents list, e.g. "BUSINESS CARD (...1234)" or "MY BUSINESS (...5678)"
+  — one SD account per Chase account. The list shows the current year. Card statements have
+  a direct save link; bank statements have a save menu (expand) with "Download PDF".
+
+options:
+  account: The account's label in Statements and Documents, e.g. "BUSINESS CARD (...1234)".
+
+signIn:
+  url: https://secure.chase.com/web/auth/dashboard
+  username: '#logonbox >> internal:control=enter-frame >> #userId-input-field-input'
+  password: '#logonbox >> internal:control=enter-frame >> #password-input-field-input'
+  submit: '#logonbox >> internal:control=enter-frame >> #signin-button'
+  signedIn: ':text-is("Sign out")'
+  attended: true
+
+documents:
+  steps:
+    - goto: https://secure.chase.com/web/auth/dashboard#/dashboard/documents/myDocs/index;mode=documents
+    - click: ":text-is('Accounts') >> visible=true"
+      ifOption: account
+    - click: "a:has-text('{account}') >> visible=true"
+      ifOption: account
+    - waitFor: "tr[id^='accountsTable-STATEMENTS-row']"
+  list:
+    rows: "tr[id^='accountsTable-STATEMENTS-row']"
+    date: { column: 1 }
+    expand: "a[id^='header-'][id$='downloadDocumentDropdown']"
+    link: { selector: "a[id$='requestThisDocumentAnchor-download'], a[id$='downloadPDFOption']" }
+  download: click
+
+parse:
+  require: 'JPMorgan Chase|chase\.com'
+  # Bank: "October 01, 2026 through October 30, 2026". Card: "Opening/Closing Date 09/15/26 - 10/14/26".
+  date:
+    - 'through ([A-Z][a-z]+ \d{1,2}, \d{4})'
+    - 'Opening/Closing Date \d{2}/\d{2}/\d{2} - (\d{2}/\d{2}/\d{2})'
+  dateFormats: ['MMMM dd, yyyy', 'MMMM d, yyyy', 'MM/dd/yy']
+  accountNumber: 'Account Number: XXXX XXXX XXXX (\d{4})'
+  # Card: the new balance. Bank: the ending balance.
+  amount:
+    - 'New Balance \$([\d,]+\.\d{2})'
+    - 'Ending Balance (?:\d+ )?\$([\d,]+\.\d{2})'
+
+# Checked by the test suite. Made-up numbers only; text is in the order `pdf-text` prints it.
+tests:
+  documents:
+    - text: >-
+        JPMorgan Chase Bank, N.A. P O Box 1 Columbus, OH 43000 October 01, 2026 through October 30, 2026
+        Account Number: Chase.com Beginning Balance $1,000.00 Ending Balance 7 $2,345.67 MY BUSINESS LLC
+      expect: { date: 2026-10-30, amount: 2345.67 }
+    - text: >-
+        Manage your account online at : www.chase.com/cardhelp Payment Due Date: 11/08/26 New Balance: $99.99
+        Account Number: XXXX XXXX XXXX 1234 New Balance $123.45 Past Due Amount $0.00
+        Opening/Closing Date 09/15/26 - 10/14/26 Revolving Credit Amount $5,000
+      expect: { date: 2026-10-14, amount: 123.45, accountNumber: '1234' }
+    - text: 'SCANA Energy through October 30, 2026 Ending Balance $5.00'
+      expect: null
+  rows:
+    - cells: ['Oct 30, 2026', 'Statement', '2 pages', '']
+      expect: { date: 2026-10-30, url: '' }
