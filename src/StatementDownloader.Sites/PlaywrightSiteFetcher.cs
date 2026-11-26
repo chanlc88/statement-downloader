@@ -181,7 +181,7 @@ public abstract class PlaywrightSiteFetcher : ISiteFetcher
 
     /// <summary>Page text of a bot-check interstitial ("Additional security check is required", "Just a moment…").</summary>
     public static bool IsBotWallText(string text) =>
-        Regex.IsMatch(text, @"Incapsula incident|Additional security check is required|verify (that )?you are (a )?human|I am human|Checking (if the site connection is secure|your browser)|Just a moment\.\.\.|Press (and|&) hold|Access Denied.{0,80}Reference #", RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        Regex.IsMatch(text, @"Incapsula incident|Additional security check is required|verify (that )?you are (a )?human|I am human|Checking (if the site connection is secure|your browser)|Just a moment\.\.\.|Press (and|&) hold|Access Denied.{0,200}Reference #", RegexOptions.IgnoreCase | RegexOptions.Singleline);
 
     protected static async Task<string> BodyTextAsync(IPage page)
     {

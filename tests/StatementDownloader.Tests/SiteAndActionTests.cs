@@ -95,6 +95,7 @@ public class BotWallTests
     [InlineData("Request unsuccessful. Incapsula incident ID: 123-456", true)]
     [InlineData("example.com - Additional security check is required", true)]
     [InlineData("Just a moment... Verifying you are human.", true)]
+    [InlineData("Access Denied\nYou don't have permission to access \"http://www.example.com/\" on this server.\nReference #18.1a2b3c4d.1700000000.5e6f7a8b", true)]
     [InlineData("Welcome back! Your bill is ready.", false)]
     public void Recognizes_bot_check_pages(string text, bool expected) =>
         Assert.Equal(expected, StatementDownloader.Sites.PlaywrightSiteFetcher.IsBotWallText(text));

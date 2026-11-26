@@ -130,8 +130,8 @@ browser to you (assisted sign-in). It never tries to get past them itself.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `steps` | none | Done in order after signing in to reach the list. Each step is one of `click: <selector>`, `follow: <selector>` (activate a link that's in the page but hidden in a collapsed menu, as the site's own menu would — for in-app links), `goto: <url, may be relative>`, `waitFor: <selector>` (if it doesn't appear, the page is refreshed up to three times and checked again), with optional `frame: <iframe selector>`, `timeout` (default `30s`) and `ifOption: <name>` (run only when the account sets that option). |
-| `list.rows` | required | One element per document, usually `table tbody tr`. |
+| `steps` | none | Done in order after signing in to reach the list. Each step is one of `click: <selector>`, `follow: <selector>` (activate a link that's in the page but hidden in a collapsed menu, as the site's own menu would — for in-app links), `goto: <url, may be relative>`, `waitFor: <selector>` (if it doesn't appear, the page is refreshed up to three times and checked again), with optional `frame: <iframe selector>`, `timeout` (default `30s`), `ifOption: <name>` (run only when the account sets that option) and `optional: true` (skip the step when its element doesn't turn up — e.g. click a panel's header only while it's collapsed). |
+| `list.rows` | required | One element per document, usually `table tbody tr`. May use `{option}` placeholders, e.g. to keep one account's documents from a list that shows every account. |
 | `list.frame` | | The iframe the list is in. |
 | `list.wait` | `30s` | How long to wait for the first row. |
 | `list.date` | required | Where the document date is in a row (below). Rows without a readable date are skipped. |
@@ -139,7 +139,7 @@ browser to you (assisted sign-in). It never tries to get past them itself.
 | `list.link.selector` | the row | Element in the row that leads to the PDF. |
 | `list.link.attribute` | `href` | Attribute holding the URL. |
 | `list.link.pattern` | | Regex to pull the URL out of the attribute (e.g. from an `onclick`). |
-| `list.expand` | | Element in the row to click first when the link is in a details panel the row opens. The link selector can reach into the panel with `xpath=following-sibling::tr[1]//a`. |
+| `list.expand` | | Element in the row to click first when the link is in a details panel the row opens, or is covered until the row is opened. The link selector can reach into the panel with `xpath=following-sibling::tr[1]//a`. |
 | `download` | `fetch` | `fetch`: request the URL with the browser's cookies (fast, works for direct PDF links). `click`: click the link and save the file the browser downloads — the link then needs no URL (script-driven buttons are fine). `popup`: click the link; the site opens the PDF in a new window (often a `blob:` address made by its own script), which is saved and closed. Use it when the site fetches PDFs with its own sign-in token, so a plain `fetch` gets "Unauthorized". |
 | `firstRunLookback` | `400d` | With nothing on record yet, how far back to download. |
 
@@ -174,7 +174,8 @@ paste a real bill.
 - `documents`: `text` (PDF text in `pdf-text` order) and `expect` with `date`,
   `statementNumber`, `amount`, `accountNumber`; `expect: null` means "not this site's
   document".
-- `rows`: a row's `cells` (column texts) and `link` (the link attribute), with the
+- `rows`: a row's `cells` (column texts; for fields read by `selector`, their texts in the
+  order date, amount) and `link` (the link attribute), with the
   `date`, `amount` and `url` it should give.
 
 ## Writing a recipe

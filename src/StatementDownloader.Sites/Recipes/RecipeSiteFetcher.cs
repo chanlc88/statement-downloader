@@ -42,6 +42,13 @@ public sealed class RecipeSiteFetcher(SiteRecipe recipe) : PlaywrightSiteFetcher
         await page.Locator(S.Submit).First.ClickAsync();
     }
 
+    private static async Task<bool> ClickableAsync(ILocator element)
+    {
+        if (!await element.IsVisibleAsync()) return false;
+        try { await element.ClickAsync(new LocatorClickOptions { Trial = true, Timeout = 2000 }); return true; }
+        catch (TimeoutException) { return false; }
+    }
+
     protected override async Task<IReadOnlyList<FoundDocument>> DownloadNewDocumentsAsync(IPage page, IBrowserContext browser, SiteContext ctx, CancellationToken ct)
     {
         var d = recipe.Documents;
@@ -58,14 +65,18 @@ public sealed class RecipeSiteFetcher(SiteRecipe recipe) : PlaywrightSiteFetcher
                 WaitFor = RecipeOptions.Fill(step.WaitFor, options, ctx.Account.Id),
                 Frame = RecipeOptions.Fill(step.Frame, options, ctx.Account.Id),
                 Timeout = step.Timeout,
+                Optional = step.Optional,
             }, i);
         }
         catch (InvalidDataException ex) { throw new SiteLayoutException(ex.Message); }
 
         var list = d.List;
-        var rows = In(page, list.Frame, list.Rows);
+        string rowsSelector;
+        try { rowsSelector = RecipeOptions.Fill(list.Rows, options, ctx.Account.Id)!; }
+        catch (InvalidDataException ex) { throw new SiteLayoutException(ex.Message); }
+        var rows = In(page, list.Frame, rowsSelector);
         try { await rows.First.WaitForAsync(new LocatorWaitForOptions { Timeout = Ms(list.Wait) }); }
-        catch (TimeoutException) { throw new SiteLayoutException($"The {recipe.Kind} list didn't appear (no '{list.Rows}' after {list.Wait})."); }
+        catch (TimeoutException) { throw new SiteLayoutException($"The {recipe.Kind} list didn't appear (no '{rowsSelector}' after {list.Wait})."); }
         if (ctx.Capture) await SaveDiagnosticsAsync(page, ctx, "capture-list");
 
         var known = ctx.Known.Where(k => k.StatementNumber is not null).Select(k => k.StatementNumber!).ToHashSet();
@@ -98,7 +109,8 @@ public sealed class RecipeSiteFetcher(SiteRecipe recipe) : PlaywrightSiteFetcher
         foreach (var (doc, row, linkElement) in candidates.OrderBy(c => c.Doc.Date))
         {
             var name = $"{doc.Date:yyyy-MM-dd}-{found.Count}.pdf";
-            if (list.Expand is { } expand && !await linkElement.IsVisibleAsync())
+            // Expand when the link is hidden, or shown but covered (e.g. a card whose links appear once it's opened).
+            if (list.Expand is { } expand && !await ClickableAsync(linkElement))
             {
                 await row.Locator(expand).First.ClickAsync(new LocatorClickOptions { Timeout = 10_000 });
                 await linkElement.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 15_000 });
@@ -162,7 +174,7 @@ public sealed class RecipeSiteFetcher(SiteRecipe recipe) : PlaywrightSiteFetcher
             {
                 var target = In(page, step.Frame, step.WaitFor!).First;
                 try { await target.WaitForAsync(new LocatorWaitForOptions { Timeout = timeout }); }
-                catch (TimeoutException)
+                catch (TimeoutException) when (!step.Optional)
                 {
                     // Some sites show a passing "something went wrong, refresh" page: refresh and look
                     // again, a few times, pausing in between.
@@ -177,6 +189,7 @@ public sealed class RecipeSiteFetcher(SiteRecipe recipe) : PlaywrightSiteFetcher
                 }
             }
         }
+        catch (TimeoutException) when (step.Optional) { }
         catch (TimeoutException) { throw new SiteLayoutException($"Step {number} ({what}) failed: not found within {step.Timeout}."); }
     }
 

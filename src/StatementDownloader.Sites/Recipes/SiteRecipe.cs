@@ -91,6 +91,8 @@ public sealed class StepRecipe
     /// <summary>Only run this step when the account sets this option.</summary>
     public string? IfOption { get; set; }
     public string Timeout { get; set; } = "30s";
+    /// <summary>Skip the step when its element doesn't turn up (e.g. expand a panel only if it's collapsed).</summary>
+    public bool Optional { get; set; }
 }
 
 public sealed class ListRecipe
@@ -181,7 +183,7 @@ public sealed class ExpectedRow
     public string Url { get; set; } = "";
 }
 
-/// <summary><c>{name}</c> placeholders in steps, filled from the account's <c>siteOptions</c>.</summary>
+/// <summary><c>{name}</c> placeholders in steps and list rows, filled from the account's <c>siteOptions</c>.</summary>
 public static class RecipeOptions
 {
     private static readonly Regex Placeholder = new(@"\{([A-Za-z][A-Za-z0-9]*)\}");
@@ -263,6 +265,8 @@ public static class RecipeLoader
             foreach (var name in RecipeOptions.Names(s.Click, s.Follow, s.Goto, s.WaitFor, s.Frame))
                 if (!r.Options.ContainsKey(name)) e.Add($"documents.steps[{i}] uses {{{name}}}, which isn't listed under options.");
         }
+        foreach (var name in RecipeOptions.Names(r.Documents.List.Rows))
+            if (!r.Options.ContainsKey(name)) e.Add($"documents.list.rows uses {{{name}}}, which isn't listed under options.");
         Duration(r.Documents.List.Wait, "documents.list.wait");
         Duration(r.Documents.FirstRunLookback, "documents.firstRunLookback");
         if (r.Documents.List.Amount is { } amount) Field(amount, "documents.list.amount", required: false);

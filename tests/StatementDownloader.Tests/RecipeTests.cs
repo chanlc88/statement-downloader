@@ -59,8 +59,10 @@ public class RecipeTests
         var recipe = Recipe(id);
         var sample = recipe.Tests.Rows[index];
         var list = recipe.Documents.List;
-        var row = RecipeRows.Read(list, RecipeRows.Cell(list.Date, sample.Cells),
-            list.Amount is { } a ? RecipeRows.Cell(a, sample.Cells) : null, sample.Link, recipe.Parse.DateFormats,
+        // A field read by selector takes its sample text from the cells in order: date, then amount.
+        string? Text(FieldRecipe f, int i) => f.Column is null ? sample.Cells.ElementAtOrDefault(i) : RecipeRows.Cell(f, sample.Cells);
+        var row = RecipeRows.Read(list, Text(list.Date, 0),
+            list.Amount is { } a ? Text(a, 1) : null, sample.Link, recipe.Parse.DateFormats,
             clickToDownload: recipe.Documents.Download is "click" or "popup");
         Assert.NotNull(row);
         Assert.Equal(DateOnly.Parse(sample.Expect.Date), row.Date);

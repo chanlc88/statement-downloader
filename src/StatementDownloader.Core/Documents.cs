@@ -101,15 +101,20 @@ public static partial class FileNameTemplate
     /// <summary>Returns the document date encoded in <paramref name="fileName"/>, or null if it doesn't match the template.</summary>
     public static DateOnly? TryParseDate(string template, string fileName)
     {
-        var m = DateToken().Match(template);
-        if (!m.Success) return null;
-        var format = m.Groups[1].Value;
+        // With several date parts (e.g. "{date:MMMM}_Statement_{date:yyyy-MM-dd}"), the date is
+        // read from the most complete one; each part matches its own format.
+        var dates = DateToken().Matches(template);
+        if (dates.Count == 0) return null;
+        var main = dates.MaxBy(d => "yMd".Count(d.Groups[1].Value.Contains))!;
+        var format = main.Groups[1].Value;
         var pattern = new StringBuilder("^");
         var pos = 0;
         foreach (Match token in Regex.Matches(template, @"\{[^}]+\}"))
         {
             pattern.Append(Regex.Escape(template[pos..token.Index]));
-            pattern.Append(token.Value.StartsWith("{date:") ? "(?<date>" + FormatToRegex(format) + ")" : ".*?");
+            pattern.Append(!token.Value.StartsWith("{date:") ? ".*?"
+                : token.Index == main.Index ? "(?<date>" + FormatToRegex(format) + ")"
+                : "(?:" + FormatToRegex(token.Value[6..^1]) + ")");
             pos = token.Index + token.Length;
         }
         pattern.Append(Regex.Escape(template[pos..])).Append('$');

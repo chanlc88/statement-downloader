@@ -1,0 +1,54 @@
+# Westfield Insurance — commercial policy bills (MyWestfield, my.westfieldinsurance.com).
+# Format: docs/site-recipes.md. Regexes are written in 'single quotes' so backslashes stay as-is.
+id: westfield
+name: Westfield Insurance (policy bills)
+kind: bill
+region: US
+website: https://www.westfieldinsurance.com
+verified: 2026-11-24
+notes: >
+  Email + password sign-in (PingFederate, sso.westfieldgrp.com), then a one-time code on new
+  devices: choose Sign in now when SD asks and enter the code. Documents lists each policy's
+  billing statements as [invoice date, "Invoice", Download]; Download saves the PDF (Bill.pdf).
+  Bills have no invoice number, so the bill date identifies each one. The amount is the
+  Total Amount Due (installment plus any installment fee).
+
+signIn:
+  url: https://my.westfieldinsurance.com/CustomerPortal/Documents
+  username: 'input#username'
+  password: 'input#password'
+  submit: 'a.primary-button'
+  signedIn: 'a:has-text("Log out")'
+
+documents:
+  steps:
+    - goto: /CustomerPortal/Documents
+    - waitFor: 'tr.table-row a:has-text("Download")'
+      timeout: 60s
+  list:
+    rows: 'tr.table-row:has(td[data-header="File Type"]:has-text("Invoice"))'
+    date: { column: 1 }
+    link: { selector: 'a:has-text("Download")' }
+  download: click
+
+parse:
+  require: 'Westfield'
+  date: 'Bill date: (\d{2}/\d{2}/\d{4})'
+  dateFormats: ['MM/dd/yyyy', 'MM-dd-yyyy']
+  accountNumber: 'Account number: (\d{6,})'
+  amount: 'Total Amount Due: \$([\d,]+\.\d{2})'
+
+# Checked by the test suite. Made-up numbers only; text is in the order `pdf-text` prints it.
+tests:
+  documents:
+    - text: >-
+        Bill date: 11/11/2026 | Account number: 1234567890 Page 1 of 3 Ask us anything Call 800-000-0000
+        Example Properties LLC 100 Main St Atlanta, GA 30000 Account number: 1234567890 Payment due: $123.45
+        Pay in full amount: $1,234.56 Date due by: 12/01/2026 Westfield Insurance Payment Processing
+        Your Bill at a Glance Current amount due by 12/01/2026 $123.45 Total Amount Due: $123.45
+      expect: { date: 2026-11-11, amount: 123.45, accountNumber: '1234567890' }
+    - text: 'Georgia Power Bill date: 11/11/2026 Total Amount Due: $5.00'
+      expect: null
+  rows:
+    - cells: ['11-11-2026', 'Invoice', 'Download']
+      expect: { date: 2026-11-11, url: '' }

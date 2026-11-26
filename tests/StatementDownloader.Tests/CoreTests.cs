@@ -134,6 +134,7 @@ public class FileNameTemplateTests
     [InlineData("{date:yyyyMMdd} statement {statement}.pdf", "20261118 statement 99.pdf", "2026-11-18")]
     [InlineData("{kind}-{date:MMM yyyy}.pdf", "bill-Nov 2026.pdf", "2026-11-01")]
     [InlineData("{date:yyyy-MM-dd}.pdf", "notes.txt", null)]
+    [InlineData("{date:MMMM}_Statement_{date:yyyy-MM-dd}.pdf", "October_Statement_2026-10-07.pdf", "2026-10-07")]
     public void Reads_dates_back(string template, string file, string? expected) =>
         Assert.Equal(expected is null ? null : DateOnly.Parse(expected), FileNameTemplate.TryParseDate(template, file));
 }
