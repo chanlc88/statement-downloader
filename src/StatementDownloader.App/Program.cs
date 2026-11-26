@@ -104,6 +104,9 @@ try
     {
         case "serve":
             {
+                // A sign-in that was under way when the app last stopped didn't finish.
+                foreach (var st in await services.Auth.GetAllAsync())
+                    if (st.Status == AuthStatus.Assisting) await services.Auth.SaveAsync(st with { Status = AuthStatus.NeedsAssist });
                 var app = WebUi.Build(services, []);
                 Console.WriteLine($"Statement Downloader running at {services.Links.Dashboard}");
                 await app.RunAsync();

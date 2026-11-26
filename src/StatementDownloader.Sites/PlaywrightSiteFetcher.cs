@@ -29,7 +29,8 @@ public abstract class PlaywrightSiteFetcher : ISiteFetcher
     protected virtual Task WaitForPageReadyAsync(IPage page, CancellationToken ct) => Task.CompletedTask;
     /// <summary>True when a username/password form is showing.</summary>
     protected abstract Task<bool> HasSignInFormAsync(IPage page, CancellationToken ct);
-    protected abstract Task SubmitSignInAsync(IPage page, SiteCredential credential, CancellationToken ct);
+    /// <summary>Fills the sign-in form and, unless <paramref name="submit"/> is false, sends it.</summary>
+    protected abstract Task SubmitSignInAsync(IPage page, SiteCredential credential, CancellationToken ct, bool submit = true);
     protected abstract Task<IReadOnlyList<FoundDocument>> DownloadNewDocumentsAsync(IPage page, IBrowserContext browser, SiteContext ctx, CancellationToken ct);
 
     /// <summary>The site refuses unattended browsers; only visit it in a visible window with the person present.</summary>
@@ -107,12 +108,19 @@ public abstract class PlaywrightSiteFetcher : ISiteFetcher
     {
         if (await IsSignedInAsync(page, ct)) return null;
 
+        // With a person present and a human check on the form, fill it and leave the check and the
+        // sign-in click to them: sending the form first only makes the check fail and start over.
+        var personSubmits = false;
         if (await HasSignInFormAsync(page, ct))
         {
-            await SubmitSignInAsync(page, ctx.Credential, ct);
-            await SettleAsync(page);
-            await WaitForSignedInAsync(page, TimeSpan.FromSeconds(20), ct);
-            if (await IsSignedInAsync(page, ct)) return null;
+            personSubmits = ctx.Interactive && await HasHumanCheckAsync(page);
+            await SubmitSignInAsync(page, ctx.Credential, ct, submit: !personSubmits);
+            if (!personSubmits)
+            {
+                await SettleAsync(page);
+                await WaitForSignedInAsync(page, TimeSpan.FromSeconds(20), ct);
+                if (await IsSignedInAsync(page, ct)) return null;
+            }
         }
 
         if (!ctx.Interactive)
@@ -131,8 +139,10 @@ public abstract class PlaywrightSiteFetcher : ISiteFetcher
             try
             {
                 if (await IsSignedInAsync(page, ct)) return null;
-                // If the site returned to a clean sign-in form, fill it again for the person.
-                if (await HasSignInFormAsync(page, ct) && await PasswordFieldEmptyAsync(page)) await SubmitSignInAsync(page, ctx.Credential, ct);
+                // If the site returned to a clean sign-in form, fill it again for the person, who
+                // signs in (sending it again here could loop on a check that keeps failing).
+                if (await HasSignInFormAsync(page, ct) && await PasswordFieldEmptyAsync(page))
+                    await SubmitSignInAsync(page, ctx.Credential, ct, submit: false);
             }
             catch (PlaywrightException) when (page.IsClosed)
             {
@@ -156,10 +166,24 @@ public abstract class PlaywrightSiteFetcher : ISiteFetcher
         }
     }
 
+    /// <summary>A CAPTCHA or "verify you are human" check on the page (or in one of its frames).</summary>
+    protected static async Task<bool> HasHumanCheckAsync(IPage page)
+    {
+        try
+        {
+            if (await page.Locator(CaptchaSelector).CountAsync() > 0) return true;
+            if (page.Frames.Any(f => IsBotWallUrl(f.Url) || f.Url.Contains("turnstile", StringComparison.OrdinalIgnoreCase))) return true;
+            return IsBotWallText(await BodyTextAsync(page));
+        }
+        catch (PlaywrightException) { return false; }
+    }
+
+    private const string CaptchaSelector = "iframe[src*='recaptcha'], iframe[src*='hcaptcha'], iframe[src*='turnstile'], .g-recaptcha, .cf-turnstile, [data-sitekey]";
+
     /// <summary>Works out why an unattended sign-in didn't succeed.</summary>
     protected virtual async Task<AuthFailureReason> ClassifyAsync(IPage page, CancellationToken ct)
     {
-        var captcha = await page.Locator("iframe[src*='recaptcha'], iframe[src*='hcaptcha'], iframe[src*='turnstile'], .g-recaptcha, [data-sitekey]").CountAsync();
+        var captcha = await page.Locator(CaptchaSelector).CountAsync();
         if (captcha > 0) return AuthFailureReason.Captcha;
         // Bot walls (Imperva/Incapsula, Cloudflare, Akamai…) often put the CAPTCHA in a nested frame.
         if (page.Frames.Any(f => IsBotWallUrl(f.Url))) return AuthFailureReason.Captcha;

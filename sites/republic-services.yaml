@@ -7,9 +7,10 @@ region: US
 website: https://www.republicservices.com
 verified: 2026-11-20
 notes: >
-  Email + password sign-in (Auth0), no CAPTCHA seen. The site refuses unattended (headless)
-  browsers outright, so this recipe is attended: SD asks you to choose Sign in now when a bill
-  is due, then signs in and downloads in a visible window by itself. Payments → Invoice
+  Email + password sign-in (Auth0). The site refuses unattended (headless) browsers outright
+  and may show a "verify you are human" check that automated browsers can't pass, so SD opens
+  a regular browser window: choose Sign in now when a bill is due; SD fills the sign-in form,
+  you pass any check and click Log in, and SD downloads by itself. Payments → Invoice
   History lists [invoice number, due date, amount]; clicking the invoice number opens the PDF
   in a new window. The list is inside a shadow DOM, which Playwright selectors reach directly.
   Use Current Invoice Charges as the amount: Total Amount Due can include credits or an
@@ -21,7 +22,7 @@ signIn:
   password: 'input#password'
   submit: 'button[name=action]'
   signedIn: ':text-is("Logout")'
-  attended: true
+  yourBrowser: true
 
 documents:
   steps:

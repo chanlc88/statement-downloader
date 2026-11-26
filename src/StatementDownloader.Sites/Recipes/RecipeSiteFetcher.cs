@@ -30,9 +30,16 @@ public sealed class RecipeSiteFetcher(SiteRecipe recipe) : PlaywrightSiteFetcher
     protected override Task<bool> HasSignInFormAsync(IPage page, CancellationToken ct) =>
         page.Locator(S.Username).First.IsVisibleAsync();
 
-    protected override async Task SubmitSignInAsync(IPage page, SiteCredential credential, CancellationToken ct)
+    protected override async Task SubmitSignInAsync(IPage page, SiteCredential credential, CancellationToken ct, bool submit = true)
     {
         await page.Locator(S.Username).First.FillAsync(credential.Username);
+        if (!submit)
+        {
+            // Fill what's showing; the person goes on (a two-page form's password is filled when it appears).
+            if (await page.Locator(S.Password).First.IsVisibleAsync())
+                await page.Locator(S.Password).First.FillAsync(credential.Password);
+            return;
+        }
         if (S.Next is { } next)
         {
             await page.Locator(next).First.ClickAsync();
