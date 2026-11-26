@@ -43,7 +43,10 @@ public sealed class BrowserSession : IAsyncDisposable
             // Its own console output (sync, extension and update chatter) isn't ours to log.
             var psi = new ProcessStartInfo(exe) { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
             foreach (var arg in new[] { $"--remote-debugging-port={port}", "--remote-debugging-address=127.0.0.1", $"--user-data-dir={profileDir}-browser",
-                                        "--no-first-run", "--no-default-browser-check", "--new-window", url })
+                                        "--no-first-run", "--no-default-browser-check",
+                                        // A new profile would otherwise sign in to the browser account and sync
+                                        // its extensions, each opening a welcome tab; the sign-in needs neither.
+                                        "--disable-sync", "--disable-extensions", "--new-window", url })
                 psi.ArgumentList.Add(arg);
             // The browser may relaunch itself, so the started process isn't tracked: it's closed through its port.
             var started = Process.Start(psi) ?? throw new InvalidOperationException($"Could not start {exe}.");
