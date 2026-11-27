@@ -36,6 +36,8 @@ public sealed record SiteContext
     /// <summary>Save a snapshot of each page visited after sign-in (for mapping a new site).</summary>
     public bool Capture { get; init; }
     public TimeSpan AssistTimeout { get; init; } = TimeSpan.FromMinutes(10);
+    /// <summary>The mailbox sign-in codes are emailed to, when one is configured.</summary>
+    public Mailbox? Mailbox { get; init; }
     public required ILogger Log { get; init; }
 }
 

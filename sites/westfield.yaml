@@ -19,12 +19,23 @@ signIn:
   password: 'input#password'
   submit: 'a.primary-button'
   signedIn: 'a:has-text("Log out")'
+  # New devices get a passcode by email from PingOne ("Your passcode is: 123456").
+  emailCode:
+    from: 'pingidentity\.com'
+    pattern: 'passcode is:?\s*(\d{4,8})'
 
 documents:
   steps:
     - goto: /CustomerPortal/Documents
     - waitFor: 'tr.table-row a:has-text("Download")'
       timeout: 60s
+    # Cookie banner (decline) and a "what's new" product tour that covers the list, when shown.
+    - click: '#onetrust-reject-all-handler'
+      timeout: 5s
+      optional: true
+    - click: 'button._pendo-close-guide'
+      timeout: 5s
+      optional: true
   list:
     rows: 'tr.table-row:has(td[data-header="File Type"]:has-text("Invoice"))'
     date: { column: 1 }

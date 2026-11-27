@@ -113,6 +113,7 @@ public abstract class PlaywrightSiteFetcher : ISiteFetcher
         // leave the check and the sign-in click to them (sending it would only fail the check).
         // After this one attempt the form is never sent again, so a failing sign-in can't loop.
         var personSubmits = false;
+        var signInSent = DateTimeOffset.Now;
         if (await HasSignInFormAsync(page, ct))
         {
             personSubmits = ctx.Interactive && await HasHumanCheckAsync(page) && !await HumanCheckPassesAsync(page, TimeSpan.FromSeconds(15), ct);
@@ -122,8 +123,15 @@ public abstract class PlaywrightSiteFetcher : ISiteFetcher
                 await SettleAsync(page);
                 await WaitForSignedInAsync(page, TimeSpan.FromSeconds(20), ct);
                 if (await IsSignedInAsync(page, ct)) return null;
+                if (await EnterEmailedCodeAsync(page, ctx, signInSent, TimeSpan.FromSeconds(10), ct))
+                {
+                    await SettleAsync(page);
+                    await WaitForSignedInAsync(page, TimeSpan.FromSeconds(30), ct);
+                    if (await IsSignedInAsync(page, ct)) return null;
+                }
             }
         }
+        var codeTried = !personSubmits;
 
         if (!ctx.Interactive)
         {
@@ -141,6 +149,8 @@ public abstract class PlaywrightSiteFetcher : ISiteFetcher
             try
             {
                 if (await IsSignedInAsync(page, ct)) return null;
+                // The person sent the form and the site now asks for its emailed code: fetch it once.
+                if (!codeTried && await EnterEmailedCodeAsync(page, ctx, signInSent, TimeSpan.Zero, ct)) codeTried = true;
                 // If the site returned to a clean sign-in form, fill it again for the person, who
                 // signs in (sending it again here could loop on a check that keeps failing).
                 if (await HasSignInFormAsync(page, ct) && await PasswordFieldEmptyAsync(page))
@@ -155,6 +165,14 @@ public abstract class PlaywrightSiteFetcher : ISiteFetcher
         }
         return SiteResult.AuthFailed(AuthFailureReason.AssistAbandoned, $"Not signed in after {ctx.AssistTimeout.TotalMinutes:0} minutes.", await SaveDiagnosticsAsync(page, ctx, "assist-timeout"));
     }
+
+    /// <summary>
+    /// When the site asks for a code it emailed, reads it from the configured mailbox and enters it.
+    /// False when the site has no emailed code, no mailbox is set up, the page doesn't ask within
+    /// <paramref name="appear"/>, or the email doesn't come — the person can then enter it.
+    /// </summary>
+    protected virtual Task<bool> EnterEmailedCodeAsync(IPage page, SiteContext ctx, DateTimeOffset since, TimeSpan appear, CancellationToken ct) =>
+        Task.FromResult(false);
 
     /// <summary>Polls the signed-in check for a while (sites that redirect a few times after sign-in).</summary>
     private async Task WaitForSignedInAsync(IPage page, TimeSpan max, CancellationToken ct)

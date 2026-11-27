@@ -17,6 +17,8 @@ public sealed class AppConfig
     public SecretsConfig Secrets { get; set; } = new();
     public ScheduleDefaults Schedule { get; set; } = new();
     public NotificationConfig Notifications { get; set; } = new();
+    /// <summary>Where sites email sign-in codes (optional; recipes with <c>signIn.emailCode</c> use it).</summary>
+    public MailboxConfig? Mailbox { get; set; }
     public List<AccountConfig> Accounts { get; set; } = [];
 }
 

@@ -49,6 +49,41 @@ public sealed class RecipeSiteFetcher(SiteRecipe recipe) : PlaywrightSiteFetcher
         await page.Locator(S.Submit).First.ClickAsync();
     }
 
+    private const string CodeFieldDefault =
+        "input[autocomplete='one-time-code'], input[name*='otp' i], input[id*='otp' i], input[name*='passcode' i], input[id*='passcode' i], input[name*='code' i]:not([type=hidden])";
+
+    protected override async Task<bool> EnterEmailedCodeAsync(IPage page, SiteContext ctx, DateTimeOffset since, TimeSpan appear, CancellationToken ct)
+    {
+        if (S.EmailCode is not { } ec || ctx.Mailbox is not { } mailbox) return false;
+        var field = page.Locator(ec.Field ?? CodeFieldDefault).First;
+        try
+        {
+            if (appear > TimeSpan.Zero) await field.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = (float)appear.TotalMilliseconds });
+            else if (!await field.IsVisibleAsync()) return false;
+        }
+        catch (TimeoutException) { return false; }
+
+        ctx.Log.LogInformation("{Site}: waiting up to {Wait} for the emailed code", SiteId, ec.Wait);
+        string? code;
+        // A little earlier than the sign-in, for the mail server's clock.
+        try { code = await mailbox.WaitForCodeAsync(ec.From, ec.Pattern, since.AddSeconds(-30), Durations.Parse(ec.Wait), ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            ctx.Log.LogWarning("{Site}: couldn't read the mailbox for the code: {Error}", SiteId, ex.Message);
+            return false;
+        }
+        if (code is null)
+        {
+            ctx.Log.LogWarning("{Site}: no code email arrived within {Wait}", SiteId, ec.Wait);
+            return false;
+        }
+        await field.FillAsync(code);
+        if (ec.Submit is { } submit) await page.Locator(submit).First.ClickAsync();
+        else await field.PressAsync("Enter");
+        ctx.Log.LogInformation("{Site}: entered the emailed code", SiteId);
+        return true;
+    }
+
     private static async Task<bool> ClickableAsync(ILocator element)
     {
         if (!await element.IsVisibleAsync()) return false;

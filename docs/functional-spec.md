@@ -64,6 +64,19 @@ See [`config.sample.yaml`](../config.sample.yaml) for the full annotated example
   machine (e.g. `G:/My Drive` on Windows, `~/Library/CloudStorage/GoogleDrive-…/My Drive`
   on macOS) so the same account list works on both.
 - `ui.port` — port for the local web UI (default 5187, bound to `localhost` only).
+- `mailbox` (optional) — where sites email one-time sign-in codes, for recipes with
+  `signIn.emailCode`. Read over IMAP, read-only:
+
+  ```yaml
+  mailbox:
+    host: imap.gmail.com        # the default; port 993 (TLS)
+    username: me@gmail.com
+    password: bitwarden:<id>    # for Gmail, an app password (myaccount.google.com/apppasswords)
+  ```
+
+  The app password opens the whole mailbox; a mailbox that only receives sign-in codes
+  (e.g. by a forwarding filter) limits that. `statement-downloader mail recent <sender>`
+  shows recent emails from a sender, for writing `emailCode` patterns.
 
 ### 3.2 Changing where documents are saved
 

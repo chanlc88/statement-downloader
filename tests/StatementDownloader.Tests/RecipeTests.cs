@@ -25,6 +25,14 @@ public class RecipeTests
     private static SiteRecipe Recipe(string id) => RecipeLoader.BuiltIn().Single(r => r.Id == id);
 
     [Fact]
+    public void Westfield_reads_the_emailed_passcode()
+    {
+        var ec = Recipe("westfield").SignIn.EmailCode!;
+        Assert.Matches(ec.From, "\"PingOne\" <noreply@pingidentity.com>");
+        Assert.Equal("123456", System.Text.RegularExpressions.Regex.Match("PingOne: New authentication request\nYour passcode is: 123456", ec.Pattern).Groups[1].Value);
+    }
+
+    [Fact]
     public void Built_in_recipes_load_and_each_has_samples()
     {
         var recipes = RecipeLoader.BuiltIn();

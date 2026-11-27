@@ -60,6 +60,22 @@ public sealed class SignInRecipe
     public string SignedIn { get; set; } = "";
     /// <summary>Names of the cookies that hold the sign-in, for "remembered until". Default: all persistent cookies.</summary>
     public List<string>? RememberCookies { get; set; }
+    /// <summary>A one-time code the site emails; read from the configured mailbox and entered.</summary>
+    public EmailCodeRecipe? EmailCode { get; set; }
+}
+
+public sealed class EmailCodeRecipe
+{
+    /// <summary>Regex matched against the sender, e.g. <c>'pingidentity\.com'</c>.</summary>
+    public string From { get; set; } = "";
+    /// <summary>Regex whose group 1 is the code, matched against the subject and text.</summary>
+    public string Pattern { get; set; } = "";
+    /// <summary>The code field. Default: a field marked as a one-time code, or named otp/passcode/code.</summary>
+    public string? Field { get; set; }
+    /// <summary>Button that sends the code. Default: press Enter in the field.</summary>
+    public string? Submit { get; set; }
+    /// <summary>How long to wait for the email.</summary>
+    public string Wait { get; set; } = "2m";
 }
 
 public sealed class DocumentsRecipe
@@ -253,6 +269,12 @@ public static class RecipeLoader
         Need(r.SignIn.Password, "signIn.password");
         Need(r.SignIn.Submit, "signIn.submit");
         Need(r.SignIn.SignedIn, "signIn.signedIn");
+        if (r.SignIn.EmailCode is { } ec)
+        {
+            Compiles(ec.From, "signIn.emailCode.from");
+            Regex1(ec.Pattern, "signIn.emailCode.pattern");
+            Duration(ec.Wait, "signIn.emailCode.wait");
+        }
         Need(r.Documents.List.Rows, "documents.list.rows");
         Field(r.Documents.List.Date, "documents.list.date", required: true);
 

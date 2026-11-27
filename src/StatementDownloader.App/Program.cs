@@ -24,6 +24,8 @@ const string Usage = """
       sites                      List supported sites
       setup-browser              Download the Chromium build used for sign-ins
       pdf-text <file>            Print a PDF's text as the parsers see it (for writing parsers)
+      mail recent <from> [hours] Show recent emails from a sender (regex) in the configured mailbox
+                                 (for writing emailCode patterns; default the last 72 hours)
       install | uninstall        Start / stop starting the agent at sign-in
       paths                      Show config and data locations
     """;
@@ -158,6 +160,17 @@ try
                     var (added, skipped) = await HistoryImport.RunAsync(services, a);
                     Console.WriteLine($"{a.Id}: imported {added}, already known {skipped}");
                 }
+                return 0;
+            }
+
+        case "mail" when argList.ElementAtOrDefault(1) == "recent":
+            {
+                if (services.Config.Mailbox is not { } mb) { Console.Error.WriteLine("No mailbox: is set in the config."); return 1; }
+                var hours = argList.Count > 3 ? double.Parse(argList[3], System.Globalization.CultureInfo.InvariantCulture) : 72;
+                var mail = await new Mailbox(mb, services.Secrets).RecentAsync(Arg(2), DateTimeOffset.Now.AddHours(-hours), 5);
+                if (mail.Count == 0) Console.WriteLine("No matching emails.");
+                foreach (var m in mail)
+                    Console.WriteLine($"{m.Date:yyyy-MM-dd HH:mm} | {m.From} | {m.Subject}\n  {(m.Text.Length > 700 ? m.Text[..700] + "…" : m.Text)}\n");
                 return 0;
             }
 
