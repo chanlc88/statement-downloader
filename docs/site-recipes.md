@@ -124,9 +124,11 @@ quotes'` so backslashes need no escaping.
 
 Verification codes, CAPTCHAs, bot checks ("I am human", "Just a moment…") and "is this
 you?" pages need no recipe settings: the app recognises them, notifies you and hands the
-browser to you (assisted sign-in). It never tries to get past them itself. When a human check
-is on the sign-in form, the app fills your username and password and leaves the check and the
-sign-in click to you.
+browser to you (assisted sign-in). It never tries to get past them itself. The app sends the
+sign-in form once; when a human check is on it, it first waits a little for the check to pass by
+itself (it often does in your own browser). If it doesn't, the app fills your username and
+password and leaves the check and the sign-in click to you, and it never sends the form again,
+so a failing sign-in can't loop.
 
 ### `documents`
 

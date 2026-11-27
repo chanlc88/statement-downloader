@@ -108,12 +108,14 @@ public abstract class PlaywrightSiteFetcher : ISiteFetcher
     {
         if (await IsSignedInAsync(page, ct)) return null;
 
-        // With a person present and a human check on the form, fill it and leave the check and the
-        // sign-in click to them: sending the form first only makes the check fail and start over.
+        // Sign in once by itself. A human check on the form often passes on its own in a regular
+        // browser: wait a little for that. If it doesn't, and someone is there, fill the form and
+        // leave the check and the sign-in click to them (sending it would only fail the check).
+        // After this one attempt the form is never sent again, so a failing sign-in can't loop.
         var personSubmits = false;
         if (await HasSignInFormAsync(page, ct))
         {
-            personSubmits = ctx.Interactive && await HasHumanCheckAsync(page);
+            personSubmits = ctx.Interactive && await HasHumanCheckAsync(page) && !await HumanCheckPassesAsync(page, TimeSpan.FromSeconds(15), ct);
             await SubmitSignInAsync(page, ctx.Credential, ct, submit: !personSubmits);
             if (!personSubmits)
             {
@@ -176,6 +178,27 @@ public abstract class PlaywrightSiteFetcher : ISiteFetcher
             return IsBotWallText(await BodyTextAsync(page));
         }
         catch (PlaywrightException) { return false; }
+    }
+
+    /// <summary>
+    /// Waits for a human check to pass by itself: its widget fills in its response token (Auth0
+    /// sign-in pages keep it in a hidden "captcha" field).
+    /// </summary>
+    private static async Task<bool> HumanCheckPassesAsync(IPage page, TimeSpan max, CancellationToken ct)
+    {
+        var until = DateTime.UtcNow + max;
+        while (DateTime.UtcNow < until)
+        {
+            try
+            {
+                if (await page.EvaluateAsync<bool>(
+                        "() => [...document.querySelectorAll('[name=\"cf-turnstile-response\"],[name=\"g-recaptcha-response\"],[name=\"h-captcha-response\"],input[type=hidden][name=\"captcha\"]')].some(e => e.value)"))
+                    return true;
+            }
+            catch (PlaywrightException) { /* navigating */ }
+            await Task.Delay(1000, ct);
+        }
+        return false;
     }
 
     private const string CaptchaSelector = "iframe[src*='recaptcha'], iframe[src*='hcaptcha'], iframe[src*='turnstile'], .g-recaptcha, .cf-turnstile, [data-sitekey]";
