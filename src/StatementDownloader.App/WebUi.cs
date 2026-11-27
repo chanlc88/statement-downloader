@@ -74,10 +74,27 @@ public static class WebUi
             if (st is null) return Results.NotFound();
             var docs = await s.Documents.GetAsync(id, ct);
             var events = await s.Auth.GetEventsAsync(id, ct);
+            var sched = await s.Schedule.GetAsync(id, ct);
+            var gaps = GapFinder.Find(docs.Select(d => d.DocumentDate), sched.ExpectFrom, sched.GapMarks);
             return Results.Ok(new
             {
-                account = AccountView(st, runs, s, events, docs, await s.Schedule.GetAsync(id, ct)),
-                documents = docs.OrderByDescending(d => d.DocumentDate).Select(d => new { d.Id, date = d.DocumentDate, d.StatementNumber, d.Amount, d.Path, d.Imported, d.FirstSeenUtc, review = d.Review, actions = d.Actions }),
+                account = AccountView(st, runs, s, events, docs, sched),
+                documents = docs.OrderByDescending(d => d.DocumentDate).Select(d => new { d.Id, date = d.DocumentDate, d.StatementNumber, d.Amount, d.Path, d.Imported, d.Backfilled, d.ActionsRequested, d.FirstSeenUtc, review = d.Review, actions = d.Actions }),
+                gaps = new
+                {
+                    known = gaps is not null,
+                    needs = GapFinder.MinimumDocuments,
+                    intervalDays = gaps?.IntervalDays,
+                    monthly = gaps?.Monthly,
+                    missing = gaps?.MissingCount ?? 0,
+                    slots = gaps?.Slots.OrderByDescending(x => x.Expected).Select(x => new { x.Key, expected = x.Expected, mark = x.Mark }) ?? [],
+                    hidden = gaps?.Slots.Count(x => x.Mark == GapMark.NoStatement) ?? 0,
+                    expectFrom = sched.ExpectFrom,
+                    lastFill = sched.LastFill,
+                    sched.LastFillUtc,
+                    sched.OldestListed,
+                    hasActions = st.Account.Actions.Count > 0,
+                },
                 signIns = events.OrderByDescending(e => e.AtUtc).Take(50),
             });
         });
@@ -129,6 +146,44 @@ public static class WebUi
 
         write.MapPost("/accounts/{id}/check", (string id, AppServices s, RunTracker runs) => StartRun(s, runs, id, interactive: false));
         write.MapPost("/accounts/{id}/assist", (string id, AppServices s, RunTracker runs) => StartRun(s, runs, id, interactive: true));
+        // Fill gaps in the history: every missing document, or one year's (?year=2021).
+        write.MapPost("/accounts/{id}/fill", (string id, int? year, AppServices s, RunTracker runs) => StartFill(s, runs, id, year));
+
+        // What the person says about a missing document: myself (I'll get it), none (there was no
+        // document), or clear.
+        write.MapPost("/accounts/{id}/gaps/{key}/{mark}", async (string id, string key, string mark, AppServices s, CancellationToken ct) =>
+        {
+            GapMark? m = mark switch { "myself" => GapMark.GetMyself, "none" => GapMark.NoStatement, "clear" => GapMark.None, _ => null };
+            if (m is null) return Results.BadRequest();
+            await s.Ticks.MarkGapAsync(s.Account(id), key, m.Value, ct);
+            return Results.Ok();
+        });
+
+        // Where the account's documents start (yyyy-MM); empty clears it.
+        write.MapPost("/accounts/{id}/expect-from", async (string id, string? from, AppServices s, CancellationToken ct) =>
+        {
+            DateOnly? date = null;
+            if (!string.IsNullOrWhiteSpace(from))
+            {
+                if (!DateOnly.TryParseExact(from.Trim() + (from.Trim().Length == 7 ? "-01" : ""), "yyyy-MM-dd", out var d) || d > DateOnly.FromDateTime(DateTime.Today))
+                    return Results.BadRequest(new { error = "Give a month like 2019-01." });
+                date = d;
+            }
+            await s.Ticks.SetExpectFromAsync(s.Account(id), date, ct);
+            return Results.Ok();
+        });
+
+        // Runs the account's actions on a backfilled document (they skip those unless asked).
+        write.MapPost("/documents/{id}/run-actions", async (string id, AppServices s, CancellationToken ct) =>
+        {
+            try
+            {
+                var failed = await s.Ticks.RunActionsOnAsync(id, ct);
+                return failed is null ? Results.NotFound(new { error = "No such document." }) : Results.Ok(new { failed });
+            }
+            catch (InvalidOperationException ex) { return Results.Conflict(new { error = ex.Message }); }
+        });
+
         write.MapPost("/accounts/{id}/import-history", async (string id, AppServices s, CancellationToken ct) =>
         {
             var (added, skipped) = await HistoryImport.RunAsync(s, s.Account(id), ct);
@@ -228,6 +283,30 @@ public static class WebUi
         return Results.Accepted(value: new { started = true });
     }
 
+    private static IResult StartFill(AppServices s, RunTracker runs, string id, int? year)
+    {
+        var account = s.Account(id);
+        if (Logins.Siblings(s.Config, account).Any(x => runs.Running.ContainsKey(x.Id)))
+            return Results.Conflict(new { message = "Another account on the same sign-in is running; try again when it's done." });
+        if (!runs.Running.TryAdd(account.Id, ("fill", DateTimeOffset.UtcNow)))
+            return Results.Conflict(new { message = "Already running." });
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                // Like Check now, it opens the window for you when the site needs you there.
+                var auth = await s.Auth.GetAsync(account.Id);
+                var interactive = s.Sites.GetValueOrDefault(account.Site)?.NeedsPerson == true || auth.Status == AuthStatus.NeedsAssist;
+                if (interactive) runs.Running[account.Id] = ("fill-assist", DateTimeOffset.UtcNow);
+                var outcome = await s.Ticks.FillGapsAsync(account, year, interactive);
+                runs.LastReports[account.Id] = new RunReport(account.Id, auth.Status, outcome.Found, 0, outcome.Message);
+            }
+            catch (Exception ex) { runs.LastReports[account.Id] = new RunReport(account.Id, AuthStatus.Unknown, 0, 0, "Failed: " + ex.Message); }
+            finally { runs.Running.TryRemove(account.Id, out _); }
+        });
+        return Results.Accepted(value: new { started = true });
+    }
+
     /// <summary>
     /// How the account signs in, for the banner on its card: on its own, on its own once you've signed
     /// in (while this PC is remembered), or with you every time.
@@ -282,7 +361,8 @@ public static class WebUi
         return new
         {
             pendingReview = mine.Count(d => d.Review == ReviewState.Pending),
-            newThisWeek = mine.Count(d => !d.Imported && d.FirstSeenUtc >= weekAgo),
+            newThisWeek = mine.Count(d => !d.Imported && !d.Backfilled && d.FirstSeenUtc >= weekAgo),
+            missing = GapFinder.Find(mine.Select(d => d.DocumentDate), schedule.ExpectFrom, schedule.GapMarks)?.MissingCount ?? 0,
             lastCheckedUtc = schedule.LastFullCheckUtc,
             signIn = SignInMode(st, s, events),
             a.Id,

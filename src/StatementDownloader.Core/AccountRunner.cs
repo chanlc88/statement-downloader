@@ -5,7 +5,13 @@ namespace StatementDownloader.Core;
 
 public enum RunMode { SignInOnly, Full }
 
-public sealed record RunReport(string AccountId, AuthStatus Auth, int NewDocuments, int ActionsFailed, string Summary);
+public sealed record RunReport(string AccountId, AuthStatus Auth, int NewDocuments, int ActionsFailed, string Summary)
+{
+    /// <summary>The run signed in and read the site's document list.</summary>
+    public bool Listed { get; init; }
+    /// <summary>The oldest date in the site's document list.</summary>
+    public DateOnly? OldestListed { get; init; }
+}
 
 /// <summary>
 /// Runs one account: sign in, download, file, record history, run actions, and keep the
@@ -40,7 +46,10 @@ public sealed class AccountRunner(
     /// <summary>The account's site is only visited with the person present.</summary>
     public bool NeedsPerson(AccountConfig account) => sites.TryGetValue(account.Site, out var s) && s.NeedsPerson;
 
-    public async Task<RunReport> RunAsync(AccountConfig account, RunMode mode, bool interactive = false, CancellationToken ct = default, bool capture = false)
+    /// <param name="backfill">Filling gaps: download the listed documents dated in these ranges instead of new ones.
+    /// They're recorded as backfilled: no review, no actions, no notification each.</param>
+    public async Task<RunReport> RunAsync(AccountConfig account, RunMode mode, bool interactive = false, CancellationToken ct = default, bool capture = false,
+        IReadOnlyList<DateRange>? backfill = null)
     {
         var now = clock.GetUtcNow();
         if (!sites.TryGetValue(account.Site, out var site))
@@ -57,7 +66,8 @@ public sealed class AccountRunner(
 
         var sched = await schedule.GetAsync(account.Id, ct);
         sched.LastSignInAttemptUtc = now;
-        if (mode == RunMode.Full) sched.LastFullCheckUtc = now;
+        // A fill doesn't look for new documents, so it doesn't count as a check.
+        if (mode == RunMode.Full && backfill is null) sched.LastFullCheckUtc = now;
         await schedule.SaveAsync(sched, ct);
 
         if (interactive) await auth.SaveAsync(state with { Status = AuthStatus.Assisting }, ct);
@@ -84,7 +94,8 @@ public sealed class AccountRunner(
                     WorkDir = workDir,
                     DiagnosticsDir = paths.DiagnosticsDir(account.Id),
                     Known = known,
-                    SignInOnly = mode == RunMode.SignInOnly,
+                    Backfill = backfill,
+                    SignInOnly = mode == RunMode.SignInOnly && backfill is null,
                     Interactive = interactive,
                     SharedLogin = Logins.Siblings(config, account).Count > 0,
                     Mailbox = config.Mailbox is { } mailbox ? new Mailbox(mailbox, secrets) : null,
@@ -131,17 +142,18 @@ public sealed class AccountRunner(
 
             var added = 0;
             foreach (var found in result.Documents.OrderBy(d => d.DocumentDate))
-                if (await FileDocumentAsync(account, found, known, now, ct) is not null) added++;
+                if (await FileDocumentAsync(account, found, known, now, backfill is not null, ct) is not null) added++;
 
-            if (added > 0)
+            if (added > 0 && backfill is null)
             {
                 await notify.ResolveAsync(TickRunner.OverdueIssueKey(account.Id), null, ct);
                 await notify.ResolveAsync(TickRunner.StaleIssueKey(account.Id), null, ct);
             }
 
             var failed = await actions.RunPendingAsync(account, ct);
-            var summary = mode == RunMode.SignInOnly ? "Signed in." : added == 0 ? $"Signed in; no new {account.KindWord}s." : $"Signed in; {added} new {account.KindWord}(s).";
-            return new(account.Id, state.Status, added, failed, summary);
+            var summary = backfill is not null ? $"Signed in; {added} older {account.KindWord}(s) found."
+                : mode == RunMode.SignInOnly ? "Signed in." : added == 0 ? $"Signed in; no new {account.KindWord}s." : $"Signed in; {added} new {account.KindWord}(s).";
+            return new(account.Id, state.Status, added, failed, summary) { Listed = mode == RunMode.Full, OldestListed = result.OldestListed };
         }
         finally
         {
@@ -149,7 +161,7 @@ public sealed class AccountRunner(
         }
     }
 
-    private async Task<DocumentRecord?> FileDocumentAsync(AccountConfig account, FoundDocument found, List<KnownDocument> known, DateTimeOffset now, CancellationToken ct)
+    private async Task<DocumentRecord?> FileDocumentAsync(AccountConfig account, FoundDocument found, List<KnownDocument> known, DateTimeOffset now, bool backfilled, CancellationToken ct)
     {
         // Check against the store as it is now, not only as it was when the run started: a history
         // import running at the same time may have added this document since.
@@ -171,7 +183,7 @@ public sealed class AccountRunner(
         if (existing is not null) return null;
 
         var record = await AddAndAnnounceAsync(account, found, filed.Path, filed.Sha256, now,
-            filed.Outcome == FileOutcome.AlreadyOnDisk ? "It was already in the folder" : $"Saved to {filed.Path}", ct);
+            filed.Outcome == FileOutcome.AlreadyOnDisk ? "It was already in the folder" : $"Saved to {filed.Path}", backfilled, ct);
         known.Add(new KnownDocument(record.DocumentDate, record.StatementNumber));
 
         if (filed.Outcome == FileOutcome.NameClash)
@@ -187,7 +199,8 @@ public sealed class AccountRunner(
     }
 
     /// <summary>Records a new document (waiting for review when the account asks) and tells the person.</summary>
-    private async Task<DocumentRecord> AddAndAnnounceAsync(AccountConfig account, FoundDocument found, string path, string sha256, DateTimeOffset now, string where, CancellationToken ct)
+    /// <param name="backfilled">An old document found filling a gap: recorded quietly, without review.</param>
+    private async Task<DocumentRecord> AddAndAnnounceAsync(AccountConfig account, FoundDocument found, string path, string sha256, DateTimeOffset now, string where, bool backfilled, CancellationToken ct)
     {
         var record = new DocumentRecord
         {
@@ -200,9 +213,11 @@ public sealed class AccountRunner(
             Path = path,
             Sha256 = sha256,
             FirstSeenUtc = now,
-            Review = account.Review && account.Actions.Count > 0 ? ReviewState.Pending : ReviewState.None,
+            Backfilled = backfilled,
+            Review = !backfilled && account.Review && account.Actions.Count > 0 ? ReviewState.Pending : ReviewState.None,
         };
         await documents.AddAsync(record, ct);
+        if (backfilled) return record;
 
         var amount = record.Amount is { } a ? $" for {a.ToString("C", CultureInfo.GetCultureInfo("en-US"))}" : "";
         var review = record.Review == ReviewState.Pending ? " It's waiting for your review before any actions run." : "";
@@ -289,7 +304,7 @@ public sealed class ActionRunner(
         var failed = 0;
         foreach (var doc in await documents.GetAsync(account.Id, ct))
         {
-            if (doc.Imported || doc.Review is ReviewState.Pending or ReviewState.Rejected) continue;
+            if (doc.Imported || doc.Backfilled && !doc.ActionsRequested || doc.Review is ReviewState.Pending or ReviewState.Rejected) continue;
             failed += await RunForDocumentAsync(account, doc, ct, since);
         }
         return failed;

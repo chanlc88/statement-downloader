@@ -99,7 +99,7 @@ public sealed class RecipeSiteFetcher(SiteRecipe recipe) : PlaywrightSiteFetcher
         catch (TimeoutException) { return false; }
     }
 
-    protected override async Task<IReadOnlyList<FoundDocument>> DownloadNewDocumentsAsync(IPage page, IBrowserContext browser, SiteContext ctx, CancellationToken ct)
+    protected override async Task<DocumentListing> DownloadNewDocumentsAsync(IPage page, IBrowserContext browser, SiteContext ctx, CancellationToken ct)
     {
         var d = recipe.Documents;
         var options = ctx.Account.SiteOptions;
@@ -135,6 +135,10 @@ public sealed class RecipeSiteFetcher(SiteRecipe recipe) : PlaywrightSiteFetcher
             : DateOnly.FromDateTime(DateTime.Today - Durations.Parse(d.FirstRunLookback));
 
         var byClick = d.Download is "click" or "popup";
+        // Filling gaps: the listed documents dated in the missing ranges; otherwise the ones newer
+        // than the newest on record. Either way, ones already on record are dropped once read below.
+        bool Wanted(DateOnly date) => ctx.Backfill is { } ranges ? ranges.Any(r => r.Contains(date)) : date > newest;
+        DateOnly? oldest = null;
         var candidates = new List<(ListedDocument Doc, ILocator Row, ILocator LinkElement)>();
         foreach (var row in await rows.AllAsync())
         {
@@ -146,12 +150,15 @@ public sealed class RecipeSiteFetcher(SiteRecipe recipe) : PlaywrightSiteFetcher
                 await Quietly(() => linkElement.GetAttributeAsync(list.Link.Attribute, new LocatorGetAttributeOptions { Timeout = 2000 })),
                 recipe.Parse.DateFormats,
                 clickToDownload: byClick);
-            if (listed is not null && listed.Date > newest) candidates.Add((listed, row, linkElement));
+            if (listed is null) continue;
+            if (oldest is null || listed.Date < oldest) oldest = listed.Date;
+            if (Wanted(listed.Date)) candidates.Add((listed, row, linkElement));
         }
         if (candidates.Count == 0)
         {
-            ctx.Log.LogInformation("{Site}: nothing newer than {Newest}", SiteId, newest);
-            return [];
+            if (ctx.Backfill is null) ctx.Log.LogInformation("{Site}: nothing newer than {Newest}", SiteId, newest);
+            else ctx.Log.LogInformation("{Site}: none of the missing {Kind}s are listed (oldest listed: {Oldest})", SiteId, recipe.Kind, oldest);
+            return new([], oldest);
         }
 
         var baseUrl = await FrameUrlAsync(page, list.Frame) ?? page.Url;
@@ -203,7 +210,7 @@ public sealed class RecipeSiteFetcher(SiteRecipe recipe) : PlaywrightSiteFetcher
                 VendorAccountNumber = parsed.AccountNumber,
             });
         }
-        return found;
+        return new(found, oldest);
     }
 
     private static async Task RunStepAsync(IPage page, StepRecipe step, int number)

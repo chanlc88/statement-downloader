@@ -77,6 +77,15 @@ public sealed class ScheduleState
     /// Null until the first run with stable action keys.
     /// </summary>
     public Dictionary<string, DateTimeOffset>? ActionsSince { get; set; }
+    /// <summary>The person says documents start here: months before the oldest on record count as missing.</summary>
+    public DateOnly? ExpectFrom { get; set; }
+    /// <summary>What's known about missing documents, by <see cref="GapSlot.Key"/>.</summary>
+    public Dictionary<string, GapMark>? GapMarks { get; set; }
+    /// <summary>What the last gap fill found, in words.</summary>
+    public string? LastFill { get; set; }
+    public DateTimeOffset? LastFillUtc { get; set; }
+    /// <summary>The oldest document the site listed in the last fill.</summary>
+    public DateOnly? OldestListed { get; set; }
 }
 
 public enum PlannedRun { None, SignInOnly, FullCheck }

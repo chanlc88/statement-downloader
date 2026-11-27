@@ -17,6 +17,10 @@ const string Usage = """
       status                     Accounts, sign-in states, next windows
       history import <account|--all>
                                  Seed history from files already in the account's folder
+      gaps <account>             List the documents missing from the account's history
+      fill <account> [--year <yyyy>] [--assist]
+                                 Look on the site for the missing documents (or one year's)
+                                 and download the ones it still has
       secrets set-token [name]   Store a token in the OS credential store (default: the Bitwarden
                                  access token; any other name is usable as keychain:<name>)
       secrets test <reference>   Check that a secret reference resolves (prints no secret)
@@ -170,6 +174,31 @@ try
                     var (added, skipped) = await HistoryImport.RunAsync(services, a);
                     Console.WriteLine($"{a.Id}: imported {added}, already known {skipped}");
                 }
+                return 0;
+            }
+
+        case "gaps":
+            {
+                var account = services.Account(Arg(1));
+                if (await services.Ticks.GapsAsync(account) is not { } gaps)
+                {
+                    Console.WriteLine($"{account.Id}: needs at least {GapFinder.MinimumDocuments} {account.KindWord}s on record to know what's missing.");
+                    return 0;
+                }
+                Console.WriteLine($"{account.Id}: a {account.KindWord} every ~{gaps.IntervalDays} days; {gaps.MissingCount} missing.");
+                foreach (var g in gaps.Shown)
+                    Console.WriteLine($"  {g.Key,-10} {g.Mark switch { GapMark.NotOnline => "not available online", GapMark.GetMyself => "you're getting it", _ => "missing" }}");
+                return 0;
+            }
+
+        case "fill":
+            {
+                var account = services.Account(Arg(1));
+                var yi = argList.IndexOf("--year");
+                int? year = yi >= 0 ? int.Parse(Arg(yi + 1), System.Globalization.CultureInfo.InvariantCulture) : null;
+                var outcome = await services.Ticks.FillGapsAsync(account, year, interactive: argList.Contains("--assist"));
+                StatementDownloader.Sites.BrowserSession.CloseKeptWindows();
+                Console.WriteLine($"{account.Id}: {outcome.Message}");
                 return 0;
             }
 

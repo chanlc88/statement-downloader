@@ -22,6 +22,13 @@ public sealed class DocumentRecord
     /// <summary>When the app first found it online. Null for documents imported from disk.</summary>
     public DateTimeOffset? FirstSeenUtc { get; set; }
     public bool Imported { get; set; }
+    /// <summary>
+    /// Downloaded when filling a gap in the history. Actions don't run on it (it's an old document)
+    /// unless the person asks (<see cref="ActionsRequested"/>).
+    /// </summary>
+    public bool Backfilled { get; set; }
+    /// <summary>The person asked for the actions to run on this backfilled document.</summary>
+    public bool ActionsRequested { get; set; }
     public ReviewState Review { get; set; }
     public List<ActionRecord> Actions { get; set; } = [];
 }

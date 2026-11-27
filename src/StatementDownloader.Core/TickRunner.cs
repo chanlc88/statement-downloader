@@ -11,6 +11,9 @@ public sealed record AccountStatus(
     int DocumentCount,
     IReadOnlyList<Issue> OpenIssues);
 
+/// <summary>What a gap fill did: documents found, looked for, and still missing (not online).</summary>
+public sealed record FillOutcome(int Found, int LookedFor, int NotOnline, string Message);
+
 /// <summary>The hourly heartbeat: decide what's due for each account and run it.</summary>
 public sealed class TickRunner(
     AppConfig config,
@@ -109,10 +112,96 @@ public sealed class TickRunner(
         return failed;
     }
 
+    /// <summary>The documents missing from the account's history; null until it has enough to know the cycle.</summary>
+    public async Task<GapReport?> GapsAsync(AccountConfig account, CancellationToken ct = default)
+    {
+        var docs = await documents.GetAsync(account.Id, ct);
+        var state = await schedule.GetAsync(account.Id, ct);
+        return GapFinder.Find(docs.Select(d => d.DocumentDate), state.ExpectFrom, state.GapMarks);
+    }
+
+    /// <summary>
+    /// Looks on the site for the missing documents (all of them, or one year's) and downloads the
+    /// ones it still lists. Those it doesn't are marked as not available online.
+    /// </summary>
+    public async Task<FillOutcome> FillGapsAsync(AccountConfig account, int? year, bool interactive, CancellationToken ct = default)
+    {
+        using var runLock = TryLock(wait: TimeSpan.FromMinutes(15)) ?? throw new InvalidOperationException("Another run is in progress; try again shortly.");
+        var kind = account.KindWord;
+        var gaps = await GapsAsync(account, ct);
+        if (gaps is null) return new(0, 0, 0, $"SD needs at least {GapFinder.MinimumDocuments} {kind}s on record to know what's missing.");
+        var wanted = gaps.Wanted(year);
+        var where = year is null ? "" : $" from {year}";
+        if (wanted.Count == 0) return new(0, 0, 0, $"No missing {kind}s{where} to look for.");
+
+        var run = await runner.RunAsync(account, RunMode.Full, interactive, ct, backfill: GapFinder.Ranges(wanted));
+        var state = await schedule.GetAsync(account.Id, ct);
+        if (!run.Listed)
+        {
+            // Signing in or reading the list failed; the account's issues say why.
+            await notify.SendDueAsync(ct);
+            return new(0, wanted.Count, 0, $"Couldn't look for older {kind}s: {run.Summary}");
+        }
+
+        // What's still missing of what was looked for wasn't on the site.
+        var keys = wanted.Select(w => w.Key).ToHashSet();
+        var still = (await GapsAsync(account, ct))?.Slots.Where(x => keys.Contains(x.Key) && x.Wanted).ToList() ?? [];
+        state.GapMarks ??= [];
+        foreach (var x in still) state.GapMarks[x.Key] = GapMark.NotOnline;
+
+        var found = run.NewDocuments;
+        var message = $"Found {found} of {wanted.Count} missing {kind}{(wanted.Count == 1 ? "" : "s")}{where}.";
+        if (still.Count > 0)
+        {
+            var before = run.OldestListed is { } o ? still.Count(x => x.Window.To < o) : 0;
+            message += before > 0
+                ? $" The site lists {kind}s back to {run.OldestListed:MMMM yyyy}, so the {before} before that aren't available online."
+                : "";
+            if (still.Count > before)
+                message += $" {(before > 0 ? "The other" : "The")} {still.Count - before} {(still.Count - before == 1 ? "isn't" : "aren't")} on the site's list.";
+        }
+        state.LastFill = message;
+        state.LastFillUtc = clock.GetUtcNow();
+        if (run.OldestListed is not null) state.OldestListed = run.OldestListed;
+        await schedule.SaveAsync(state, ct);
+        await notify.SendDueAsync(ct);
+        return new(found, wanted.Count, still.Count, message);
+    }
+
+    /// <summary>Records what the person says about a missing document (<see cref="GapMark.None"/> clears it).</summary>
+    public async Task MarkGapAsync(AccountConfig account, string key, GapMark mark, CancellationToken ct = default)
+    {
+        var state = await schedule.GetAsync(account.Id, ct);
+        state.GapMarks ??= [];
+        if (mark == GapMark.None) state.GapMarks.Remove(key); else state.GapMarks[key] = mark;
+        await schedule.SaveAsync(state, ct);
+    }
+
+    /// <summary>Where the account's documents start (null: from the oldest on record).</summary>
+    public async Task SetExpectFromAsync(AccountConfig account, DateOnly? from, CancellationToken ct = default)
+    {
+        var state = await schedule.GetAsync(account.Id, ct);
+        state.ExpectFrom = from;
+        await schedule.SaveAsync(state, ct);
+    }
+
+    /// <summary>Runs the account's actions on a backfilled document, which they skip unless asked. Returns the number that failed, or null when there's no such document.</summary>
+    public async Task<int?> RunActionsOnAsync(string docId, CancellationToken ct = default)
+    {
+        using var runLock = TryLock(wait: TimeSpan.FromMinutes(1)) ?? throw new InvalidOperationException("A check is running right now; try again in a few minutes.");
+        var doc = (await documents.GetAsync(null, ct)).FirstOrDefault(d => d.Id == docId);
+        if (doc is null || config.Accounts.FirstOrDefault(a => a.Id == doc.AccountId) is not { } account) return null;
+        doc.ActionsRequested = true;
+        await documents.UpdateAsync(doc, ct);
+        var failed = await runner.Actions.RunForDocumentAsync(account, doc, ct);
+        await notify.SendDueAsync(ct);
+        return failed;
+    }
+
     public async Task<(CycleEstimate? Estimate, IReadOnlyList<DocumentRecord> Documents)> EstimateAsync(AccountConfig account, CancellationToken ct = default)
     {
         var docs = await documents.GetAsync(account.Id, ct);
-        var delays = CycleEstimator.PostingDelays(docs.Where(d => d.FirstSeenUtc is not null && !d.Imported)
+        var delays = CycleEstimator.PostingDelays(docs.Where(d => d.FirstSeenUtc is not null && !d.Imported && !d.Backfilled)
             .Select(d => (d.DocumentDate, DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(d.FirstSeenUtc!.Value, zone).DateTime))));
         return (CycleEstimator.Estimate(docs.Select(d => d.DocumentDate), delays, config.Schedule.MinSpreadDays, config.Schedule.MaxSpreadDays), docs);
     }

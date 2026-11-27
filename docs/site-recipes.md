@@ -148,7 +148,7 @@ so a failing sign-in can't loop.
 | `list.confirm` | | With `download: click`: an element on the page to click after the link, when the link opens a dialog (for example a file-type choice) whose button starts the download. |
 | `list.expand` | | Element in the row to click first when the link is in a details panel the row opens, or is covered until the row is opened. The link selector can reach into the panel with `xpath=following-sibling::tr[1]//a`. |
 | `download` | `fetch` | `fetch`: request the URL with the browser's cookies (fast, works for direct PDF links). `click`: click the link and save the file the browser downloads — the link then needs no URL (script-driven buttons are fine). `popup`: click the link; the site opens the PDF in a new window (often a `blob:` address made by its own script), which is saved and closed. Use it when the site fetches PDFs with its own sign-in token, so a plain `fetch` gets "Unauthorized". |
-| `firstRunLookback` | `400d` | With nothing on record yet, how far back to download. |
+| `firstRunLookback` | `400d` | With nothing on record yet, how far back to download. Later runs only download documents newer than the newest on record; older gaps are filled with **Fill all gaps** on the account page (it downloads whatever the list shows in the missing months). |
 
 A **field** (`date`, `amount`) is either `{ column: N }` — the Nth cell of the row,
 counting from 1 — or `{ selector: <inside the row> }`, plus an optional `pattern` to take

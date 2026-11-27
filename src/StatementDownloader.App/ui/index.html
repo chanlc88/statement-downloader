@@ -147,6 +147,15 @@
   details.year { margin-bottom: 10px; }
   details.year > summary { cursor: pointer; font-weight: 600; padding: 4px 0 8px; }
   details.year > summary .muted { font-weight: 400; }
+  details.year > summary .missing { color: var(--warn); font-weight: 400; }
+  details.year > summary .linkbtn { font-weight: 400; margin-left: 6px; }
+  tr.gap td { color: var(--muted); background: color-mix(in srgb, var(--warn) 6%, var(--panel)); }
+  tr.gap .state { color: var(--warn); font-weight: 600; }
+  tr.gap.not-online .state { color: var(--bad); }
+  tr.gap.myself .state { color: var(--muted); }
+  .gapbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-bottom: 12px; }
+  .gapbar .what { font-weight: 600; }
+  .gapbar input[type=month] { font: inherit; padding: 3px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); }
   .attention .lhead { color: var(--bad); }
   @media (max-width: 720px) {
     .arow { grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; }
@@ -267,7 +276,7 @@ const showDoc = (id, btn) => working(btn, "Opening…", () => post(`/documents/$
 
 /** What's going on with the account, in plain words: [tone, text]. Tone: ok, warn, bad or busy. */
 function statusLine(a) {
-  if (a.running) return ["busy", a.running === "assist" ? "Waiting for you in the browser window…" : "Checking now…"];
+  if (a.running) return ["busy", ["assist", "fill-assist"].includes(a.running) ? "Waiting for you in the browser window…" : a.running === "fill" ? `Looking for older ${a.kind}s…` : "Checking now…"];
   if (a.auth.status === "assisting") return ["busy", "Signing in…"];
   if (a.auth.status === "needs-assist") return ["bad", "Needs you to sign in"];
   if (a.auth.status === "broken") return ["bad", `Can't sign in${a.auth.explain ? `: ${a.auth.explain}` : ""}`];
@@ -288,7 +297,7 @@ function statusLine(a) {
 
 /** The one button the account needs now: sign in, review, or check. */
 function mainAction(a) {
-  if (a.running || a.auth.status === "assisting") return `<button disabled>${a.running === "check" ? "Checking…" : "Signing in…"}</button>`;
+  if (a.running || a.auth.status === "assisting") return `<button disabled>${a.running === "check" ? "Checking…" : a.running === "fill" ? "Filling gaps…" : "Signing in…"}</button>`;
   if (["needs-assist", "unknown", "expiring-soon", "broken"].includes(a.auth.status)) return `<button class="primary" onclick="run('${a.id}','assist',this)">Sign in</button>`;
   if (a.pendingReview) return `<a class="button primary" href="/review" data-nav>Review</a>`;
   return `<button onclick="run('${a.id}','check',this)">Check now</button>`;
@@ -317,7 +326,7 @@ function accountRow(a) {
     <div class="c-name"><span class="dot ${tone}"></span><a href="/accounts/${a.id}" data-nav title="${esc(a.signIn?.title || "")}: ${esc(a.signIn?.detail || "")}">${esc(a.name)}</a>${mode}</div>
     <div class="c-latest">${d ? `${day(d.date)} · ${money(d.amount)}${fresh ? `<span class="new">NEW</span>` : ""} <button class="linkbtn" onclick="openDoc('${d.id}')" title="Open the PDF">Open</button>`
       : `<span class="muted">No ${esc(a.kind)}s yet</span>`}</div>
-    <div class="c-status ${tone}">${esc(text)}<div class="sub">${a.lastCheckedUtc ? `Checked ${ago(a.lastCheckedUtc)}` : "Not checked yet"}</div></div>
+    <div class="c-status ${tone}">${esc(text)}<div class="sub">${a.lastCheckedUtc ? `Checked ${ago(a.lastCheckedUtc)}` : "Not checked yet"}${a.missing ? ` · <a href="/accounts/${a.id}" data-nav>${a.missing} missing</a>` : ""}</div></div>
     <div class="c-act">${mainAction(a)}${moreMenu(a)}</div>
   </div>`;
 }
@@ -416,21 +425,70 @@ function accountHead(a) {
   </div>`;
 }
 
-/** Documents by year (the newest year open), with only the columns that have something in them. */
-function documentsHtml(a, documents) {
+/** Documents by year (the newest year open), with only the columns that have something in them, and the missing ones in place. */
+function documentsHtml(a, documents, gaps) {
   if (!documents.length) return `<div class="empty">No ${esc(a.kind)}s on record. <button onclick="importHistory('${a.id}',this)">Import from folder</button></div>`;
+  const busy = a.running || a.auth.status === "assisting" ? "disabled" : "";
   const hasNumber = documents.some(x => x.statementNumber), hasActions = documents.some(x => (x.actions || []).length);
-  const imported = documents.filter(x => x.imported).length;
-  const note = `<p class="sub" style="margin:-4px 0 10px">${documents.length - imported} downloaded by SD${imported ? ` · ${imported} imported from your folder` : ""}</p>`;
+  const imported = documents.filter(x => x.imported).length, backfilled = documents.filter(x => x.backfilled).length;
+  const note = `<p class="sub" style="margin:-4px 0 10px">${documents.length - imported - backfilled} downloaded by SD${backfilled ? ` · ${backfilled} found filling gaps` : ""}${imported ? ` · ${imported} imported from your folder` : ""}</p>`;
+  const slots = (gaps.slots || []).filter(g => g.mark !== "no-statement");
+  const wanted = g => g.mark === "none" || g.mark === "not-online";
   const years = new Map();
-  for (const x of documents) { const y = String(x.date).slice(0, 4); if (!years.has(y)) years.set(y, []); years.get(y).push(x); }
-  const table = list => `<table><tr><th>Date</th><th>Amount</th>${hasNumber ? "<th>Number</th>" : ""}${hasActions ? "<th>Actions</th>" : ""}<th>File</th></tr>
-    ${list.map(x => `<tr><td>${day(x.date)}${x.review === "pending" ? ' <span class="pill">review</span>' : ""}${!x.imported && x.firstSeenUtc ? `<div class="sub">downloaded ${localDay(x.firstSeenUtc)}</div>` : ""}</td>
+  const put = (y, key, item) => { if (!years.has(y)) years.set(y, { docs: [], gaps: [] }); years.get(y)[key].push(item); };
+  for (const x of documents) put(String(x.date).slice(0, 4), "docs", x);
+  for (const g of slots) put(String(g.expected).slice(0, 4), "gaps", g);
+  const cols = 3 + hasNumber + hasActions;
+  const period = g => gaps.monthly
+    ? new Date(g.expected + "T00:00:00").toLocaleDateString(undefined, { month: "short", year: "numeric" })
+    : `around ${day(g.expected)}`;
+  const gapRow = g => {
+    const cls = g.mark === "not-online" ? "not-online" : g.mark === "get-myself" ? "myself" : "";
+    const state = { none: "Missing", "not-online": "Not available online", "get-myself": "You're getting this one" }[g.mark];
+    const k = encodeURIComponent(g.key);
+    const links = g.mark === "get-myself"
+      ? `<button class="linkbtn" onclick="markGap('${a.id}','${k}','clear',this)">Undo</button> <span class="sub">Put the PDF in the folder, then choose <b>Import from folder</b>.</span>`
+      : `<button class="linkbtn" onclick="markGap('${a.id}','${k}','myself',this)">I'll get this myself</button> · <button class="linkbtn" onclick="markGap('${a.id}','${k}','none',this)">No ${esc(a.kind)} ${gaps.monthly ? "this month" : "this time"}</button>`;
+    return `<tr class="gap ${cls}"><td>${esc(period(g))}</td><td colspan="${cols - 1}"><span class="state">${state}</span> · ${links}</td></tr>`;
+  };
+  const docRow = x => `<tr><td>${day(x.date)}${x.review === "pending" ? ' <span class="pill">review</span>' : ""}${x.backfilled ? ` <span class="pill" title="Found while filling gaps: filed without review, and actions don't run on it unless you ask">backfilled</span>` : ""}
+      ${!x.imported && x.firstSeenUtc ? `<div class="sub">downloaded ${localDay(x.firstSeenUtc)}${x.backfilled && gaps.hasActions && !x.actionsRequested ? ` · <button class="linkbtn" onclick="runActions('${x.id}',this)">Run actions</button>` : ""}</div>` : ""}</td>
       <td>${money(x.amount)}</td>${hasNumber ? `<td>${esc(x.statementNumber || "–")}</td>` : ""}
       ${hasActions ? `<td>${(x.actions || []).map(r => `<div class="${r.succeeded ? "s-healthy" : "s-broken"}">${esc(r.summary || r.type)}</div>`).join("") || '<span class="muted">–</span>'}</td>` : ""}
-      <td><code>${esc(x.path.split(/[\\/]/).pop())}</code><br><button class="linkbtn" onclick="openDoc('${x.id}')">Open</button> · <button class="linkbtn" onclick="showDoc('${x.id}',this)">Show in folder</button></td></tr>`).join("")}</table>`;
-  return note + [...years.entries()].map(([y, list], i) =>
-    `<details class="year" ${i === 0 ? "open" : ""}><summary>${y} <span class="muted">· ${list.length} ${esc(a.kind)}${list.length === 1 ? "" : "s"}</span></summary>${table(list)}</details>`).join("");
+      <td><code>${esc(x.path.split(/[\\/]/).pop())}</code><br><button class="linkbtn" onclick="openDoc('${x.id}')">Open</button> · <button class="linkbtn" onclick="showDoc('${x.id}',this)">Show in folder</button></td></tr>`;
+  const table = item => {
+    const rows = [...item.docs.map(x => [String(x.date), docRow(x)]), ...item.gaps.map(g => [String(g.expected), gapRow(g)])]
+      .sort((p, q) => p[0] < q[0] ? 1 : p[0] > q[0] ? -1 : 0);
+    return `<table><tr><th>Date</th><th>Amount</th>${hasNumber ? "<th>Number</th>" : ""}${hasActions ? "<th>Actions</th>" : ""}<th>File</th></tr>${rows.map(r => r[1]).join("")}</table>`;
+  };
+  const list = [...years.entries()].sort(([p], [q]) => q.localeCompare(p)).map(([y, item], i) => {
+    const missing = item.gaps.filter(wanted).length, n = item.docs.length;
+    const fillYear = missing ? `<button class="linkbtn" ${busy} onclick="event.preventDefault();fill('${a.id}',${y},this)">Fill this year</button>` : "";
+    return `<details class="year" ${i === 0 ? "open" : ""}><summary>${y} <span class="muted">· ${n} ${esc(a.kind)}${n === 1 ? "" : "s"}</span>${missing ? ` <span class="missing">· ${missing} missing</span>` : ""}${fillYear}</summary>${table(item)}</details>`;
+  }).join("");
+  return note + gapsBar(a, gaps, busy) + list;
+}
+
+/** How many are missing, the Fill all gaps button, what the last fill found, and where documents start. */
+function gapsBar(a, gaps, busy) {
+  const kind = esc(a.kind), Kind = esc(a.kind[0].toUpperCase() + a.kind.slice(1));
+  if (!gaps.known) return `<p class="sub">Once SD has ${gaps.needs} ${kind}s on record it shows any missing ones here.</p>`;
+  const counted = (gaps.slots || []).filter(g => g.mark === "none" || g.mark === "not-online");
+  const ys = counted.map(g => String(g.expected).slice(0, 4));
+  const span = ys.length ? (ys[ys.length - 1] === ys[0] ? ` in ${ys[0]}` : ` between ${ys[ys.length - 1]} and ${ys[0]}`) : "";
+  const what = counted.length
+    ? `<span class="what s-expiring-soon">${counted.length} ${kind}${counted.length === 1 ? "" : "s"} missing${span}.</span>
+       <button class="primary" ${busy} onclick="fill('${a.id}',null,this)">Fill all gaps</button>`
+    : `<span class="what s-healthy">No missing ${kind}s.</span>`;
+  const last = gaps.lastFill ? `<div class="sub" style="flex-basis:100%">Last fill ${ago(gaps.lastFillUtc)}: ${esc(gaps.lastFill)} ${Kind}s found this way are filed without review, and actions don't run on them.</div>` : "";
+  const from = gaps.expectFrom ? String(gaps.expectFrom).slice(0, 7) : "";
+  const start = `<div class="sub" style="flex-basis:100%">${Kind}s start
+      <input type="month" id="expectFrom" value="${from}" max="${new Date().toISOString().slice(0, 7)}"> <button class="linkbtn" onclick="saveExpectFrom('${a.id}',this)">Save</button>${from ? ` · <button class="linkbtn" onclick="saveExpectFrom('${a.id}',this,true)">Clear</button>` : ""}
+      · Months between this and your oldest ${kind} count as missing. Leave it empty to start from the oldest on record.</div>`;
+  const noneMarked = (gaps.slots || []).filter(g => g.mark === "no-statement");
+  const hidden = noneMarked.length ? `<div class="sub" style="flex-basis:100%">${noneMarked.length} marked as having no ${kind}:
+      ${noneMarked.map(g => `${esc(g.key)} <button class="linkbtn" onclick="markGap('${a.id}','${encodeURIComponent(g.key)}','clear',this)">Undo</button>`).join(" · ")}</div>` : "";
+  return `<div class="card gapbar">${what}${last}${start}${hidden}</div>`;
 }
 
 function signInsHtml(signIns) {
@@ -455,7 +513,7 @@ async function renderAccount(id, assist) {
     <h3>When ${esc(a.kind)}s come</h3>
     <div class="card"><p style="margin:0">${scheduleText(a)}</p>
       <p class="sub" style="margin:8px 0 0">Saved to <code>${esc(a.folder)}</code></p></div>
-    <h3>${esc(a.kind[0].toUpperCase() + a.kind.slice(1))}s</h3>${documentsHtml(a, d.documents)}
+    <h3>${esc(a.kind[0].toUpperCase() + a.kind.slice(1))}s</h3>${documentsHtml(a, d.documents, d.gaps)}
     <h3>Sign-ins</h3>${signInsHtml(d.signIns)}`;
 }
 
@@ -895,6 +953,28 @@ async function dismissAll(btn) {
 async function clearHistory(btn) {
   if (!confirm("Clear the list of past notifications?")) return;
   await working(btn, "Clearing…", () => post("/notifications/clear")); render();
+}
+async function fill(id, year, btn) {
+  await working(btn, "Starting…", async () => {
+    await post(`/accounts/${encodeURIComponent(id)}/fill${year ? `?year=${year}` : ""}`);
+    await new Promise(r => setTimeout(r, 400));
+  });
+  render();
+}
+async function markGap(id, key, mark, btn) {
+  await working(btn, "Saving…", () => post(`/accounts/${encodeURIComponent(id)}/gaps/${key}/${mark}`));
+  render();
+}
+async function saveExpectFrom(id, btn, clear) {
+  const v = clear ? "" : $("#expectFrom").value;
+  await working(btn, "Saving…", () => post(`/accounts/${encodeURIComponent(id)}/expect-from?from=${encodeURIComponent(v)}`));
+  render();
+}
+async function runActions(docId, btn) {
+  if (!confirm("Run this account's actions (such as recording an expense) on this old document?")) return;
+  const r = await working(btn, "Running…", () => post(`/documents/${encodeURIComponent(docId)}/run-actions`));
+  if (r && r.failed) alert(`${r.failed} action(s) failed; see Issues.`);
+  render();
 }
 async function importHistory(id, btn) {
   const r = await working(btn, "Importing…", () => post(`/accounts/${encodeURIComponent(id)}/import-history`));

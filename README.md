@@ -60,6 +60,8 @@ dotnet run --project src/StatementDownloader.App -- paths           # shows wher
 | `check <account>` / `assist <account>` | Check now / assisted sign-in then check (`--capture` saves each page, for mapping a new site) |
 | `status` | Sign-in states and learned windows |
 | `history import <account\|--all>` | Seed history from existing files |
+| `gaps <account>` | List the documents missing from an account's history |
+| `fill <account> [--year <yyyy>]` | Download the missing documents the site still has (also **Fill all gaps** / **Fill this year** on the account page) |
 | `secrets set-token [name]` / `secrets test <ref>` | Store the Bitwarden token (or any named token, used as `keychain:<name>`) / check a reference |
 | `sites` | Supported sites and where your own recipes go |
 | `install` / `uninstall` | Start the agent at sign-in |

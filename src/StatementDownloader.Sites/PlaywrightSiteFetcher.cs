@@ -31,7 +31,9 @@ public abstract class PlaywrightSiteFetcher : ISiteFetcher
     protected abstract Task<bool> HasSignInFormAsync(IPage page, CancellationToken ct);
     /// <summary>Fills the sign-in form and, unless <paramref name="submit"/> is false, sends it.</summary>
     protected abstract Task SubmitSignInAsync(IPage page, SiteCredential credential, CancellationToken ct, bool submit = true);
-    protected abstract Task<IReadOnlyList<FoundDocument>> DownloadNewDocumentsAsync(IPage page, IBrowserContext browser, SiteContext ctx, CancellationToken ct);
+    /// <summary>The documents downloaded, and the oldest date the site's list showed.</summary>
+    protected sealed record DocumentListing(IReadOnlyList<FoundDocument> Documents, DateOnly? OldestListed);
+    protected abstract Task<DocumentListing> DownloadNewDocumentsAsync(IPage page, IBrowserContext browser, SiteContext ctx, CancellationToken ct);
 
     /// <summary>The site refuses unattended browsers; only visit it in a visible window with the person present.</summary>
     protected virtual bool AttendedOnly => false;
@@ -99,8 +101,8 @@ public abstract class PlaywrightSiteFetcher : ISiteFetcher
 
         try
         {
-            var docs = await DownloadNewDocumentsAsync(page, browser, ctx, ct);
-            return new SiteResult { SignedIn = true, RememberedUntilUtc = remembered, Documents = docs };
+            var listing = await DownloadNewDocumentsAsync(page, browser, ctx, ct);
+            return new SiteResult { SignedIn = true, RememberedUntilUtc = remembered, Documents = listing.Documents, OldestListed = listing.OldestListed };
         }
         catch (Exception ex) when (ex is SiteLayoutException or PlaywrightException or TimeoutException)
         {

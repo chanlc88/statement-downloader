@@ -27,6 +27,11 @@ public sealed record SiteContext
     public required string DiagnosticsDir { get; init; }
     /// <summary>Documents already on record, so only new ones are downloaded.</summary>
     public IReadOnlyList<KnownDocument> Known { get; init; } = [];
+    /// <summary>
+    /// Filling gaps: download the listed documents dated in these ranges (that aren't on record)
+    /// instead of the ones newer than the newest on record.
+    /// </summary>
+    public IReadOnlyList<DateRange>? Backfill { get; init; }
     /// <summary>Only confirm the sign-in works (pre-flight / keep-alive).</summary>
     public bool SignInOnly { get; init; }
     /// <summary>Assisted sign-in: show the browser and wait for the person.</summary>
@@ -48,6 +53,8 @@ public sealed record SiteResult
     public string? FailureDetail { get; init; }
     public DateTimeOffset? RememberedUntilUtc { get; init; }
     public IReadOnlyList<FoundDocument> Documents { get; init; } = [];
+    /// <summary>The oldest date in the site's document list, when the list was read.</summary>
+    public DateOnly? OldestListed { get; init; }
     /// <summary>Set when signed in but listing/downloading documents failed.</summary>
     public string? DocumentError { get; init; }
     public string? DiagnosticsPath { get; init; }
