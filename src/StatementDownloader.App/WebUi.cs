@@ -56,11 +56,15 @@ public static class WebUi
         {
             var statuses = await s.Ticks.GetStatusAsync(ct);
             var events = await s.Auth.GetEventsAsync(null, ct);
+            var docs = await s.Documents.GetAsync(null, ct);
+            var views = new List<object>();
+            foreach (var st in statuses)
+                views.Add(AccountView(st, runs, s, events, docs, await s.Schedule.GetAsync(st.Account.Id, ct)));
             return Results.Ok(new
             {
                 machine = Environment.MachineName,
                 documentsRoot = s.Config.DocumentsRoot,
-                accounts = statuses.Select(st => AccountView(st, runs, s, events)),
+                accounts = views,
             });
         });
 
@@ -72,7 +76,7 @@ public static class WebUi
             var events = await s.Auth.GetEventsAsync(id, ct);
             return Results.Ok(new
             {
-                account = AccountView(st, runs, s, events),
+                account = AccountView(st, runs, s, events, docs, await s.Schedule.GetAsync(id, ct)),
                 documents = docs.OrderByDescending(d => d.DocumentDate).Select(d => new { d.Id, date = d.DocumentDate, d.StatementNumber, d.Amount, d.Path, d.Imported, d.FirstSeenUtc, review = d.Review, actions = d.Actions }),
                 signIns = events.OrderByDescending(e => e.AtUtc).Take(50),
             });
@@ -95,6 +99,16 @@ public static class WebUi
                 .Select(d => new { d.Id, d.AccountId, account = s.Config.Accounts.FirstOrDefault(a => a.Id == d.AccountId)?.DisplayName, date = d.DocumentDate, d.StatementNumber, d.Amount, d.Path,
                     actions = s.Config.Accounts.FirstOrDefault(a => a.Id == d.AccountId)?.Actions.Select(a => a.GetValueOrDefault("type")) })));
 
+        // A saved document, shown in the browser. Opened in a new tab, which can't send the key
+        // header, so the key comes in the query string instead.
+        api.MapGet("/documents/{id}/file", async (string id, string? key, AppServices s, CancellationToken ct) =>
+        {
+            if (key != s.UiKey) return Results.StatusCode(403);
+            if (await SavedFileAsync(s, id, ct) is not { } path) return Results.NotFound("The file isn't there any more.");
+            var type = Path.GetExtension(path).Equals(".pdf", StringComparison.OrdinalIgnoreCase) ? "application/pdf" : "application/octet-stream";
+            return Results.File(path, type, enableRangeProcessing: true);
+        });
+
         // State-changing endpoints need the per-install key (blocks cross-site requests).
         var write = api.MapGroup("").AddEndpointFilter(async (ctx, next) =>
             ctx.HttpContext.Request.Headers["X-SD-Key"] == services.UiKey ? await next(ctx) : Results.StatusCode(403));
@@ -116,6 +130,14 @@ public static class WebUi
                 return failed is null ? Results.Conflict(new { error = "This document was already approved or rejected." }) : Results.Ok(new { failed });
             }
             catch (InvalidOperationException ex) { return Results.Conflict(new { error = ex.Message }); }
+        });
+
+        // Opens the document's folder on this computer with the file selected.
+        write.MapPost("/documents/{id}/show", async (string id, AppServices s, CancellationToken ct) =>
+        {
+            if (await SavedFileAsync(s, id, ct) is not { } path) return Results.NotFound(new { error = "The file isn't there any more." });
+            ShowInFolder(path);
+            return Results.Ok();
         });
 
         write.MapPost("/notifications/test", async (AppServices s, CancellationToken ct) =>
@@ -296,12 +318,36 @@ public static class WebUi
         return new { mode = "own", title = "Signs in on its own", detail = "SD signs in with the saved login; no code or check needed so far." };
     }
 
-    private static object AccountView(AccountStatus st, RunTracker runs, AppServices s, IReadOnlyList<AuthEvent> events)
+    /// <summary>The full path of a recorded document, if the file is still there.</summary>
+    private static async Task<string?> SavedFileAsync(AppServices s, string id, CancellationToken ct)
+    {
+        var doc = (await s.Documents.GetAsync(null, ct)).FirstOrDefault(d => d.Id == id);
+        if (doc is null || string.IsNullOrWhiteSpace(doc.Path)) return null;
+        var path = Path.GetFullPath(doc.Path);
+        return File.Exists(path) ? path : null;
+    }
+
+    private static void ShowInFolder(string path)
+    {
+        var start = OperatingSystem.IsWindows() ? new System.Diagnostics.ProcessStartInfo("explorer.exe", $"/select,\"{path}\"")
+            : OperatingSystem.IsMacOS() ? new System.Diagnostics.ProcessStartInfo("open", ["-R", path])
+            : new System.Diagnostics.ProcessStartInfo("xdg-open", [Path.GetDirectoryName(path)!]);
+        start.UseShellExecute = false;
+        System.Diagnostics.Process.Start(start)?.Dispose();
+    }
+
+    private static object AccountView(AccountStatus st, RunTracker runs, AppServices s, IReadOnlyList<AuthEvent> events,
+        IReadOnlyList<DocumentRecord> docs, ScheduleState schedule)
     {
         var a = st.Account;
         var config = s.Config;
+        var mine = docs.Where(d => d.AccountId == a.Id).ToList();
+        var weekAgo = DateTimeOffset.UtcNow.AddDays(-7);
         return new
         {
+            pendingReview = mine.Count(d => d.Review == ReviewState.Pending),
+            newThisWeek = mine.Count(d => !d.Imported && d.FirstSeenUtc >= weekAgo),
+            lastCheckedUtc = schedule.LastFullCheckUtc,
             signIn = SignInMode(st, s, events),
             a.Id,
             name = a.DisplayName,
@@ -315,7 +361,7 @@ public static class WebUi
             auth = new { status = st.Auth.Status, reason = st.Auth.LastFailure, st.Auth.LastSuccessUtc, st.Auth.RememberedUntilUtc, explain = st.Auth.LastFailure == AuthFailureReason.None ? null : AuthTransitions.Explain(st.Auth.LastFailure).What },
             estimate = st.Estimate,
             decision = new { phase = st.Decision.Phase, run = st.Decision.Run, st.Decision.Reason },
-            lastDocument = st.LastDocument is { } d ? new { date = d.DocumentDate, d.Amount, d.StatementNumber } : null,
+            lastDocument = st.LastDocument is { } d ? new { d.Id, date = d.DocumentDate, d.Amount, d.StatementNumber, d.FirstSeenUtc, review = d.Review } : null,
             documentCount = st.DocumentCount,
             issues = st.OpenIssues,
             // Other accounts signed in with the same login (same site and credential).

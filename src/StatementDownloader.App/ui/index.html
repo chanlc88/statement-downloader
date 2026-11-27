@@ -82,6 +82,44 @@
   .rowbtns button { white-space: nowrap; }
   @media (max-width: 700px) { .lrow.editing .fields { grid-template-columns: 1fr; } }
 
+  /* Accounts overview: a summary, then one compact row per account. */
+  .summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .tile { display: block; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 16px; color: inherit; text-decoration: none; }
+  a.tile:hover { border-color: var(--accent); }
+  .tile .n { font-size: 24px; font-weight: 700; line-height: 1.2; }
+  .tile.bad .n { color: var(--bad); } .tile.warn .n { color: var(--warn); } .tile.ok .n { color: var(--ok); }
+  .tile .l { font-size: 13px; color: var(--muted); }
+  .tile .who { font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .arow { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1.3fr) minmax(0, 1.6fr) auto; gap: 14px; align-items: center; padding: 10px 14px; border-top: 1px solid var(--line); }
+  .arow:first-child { border-top: 0; }
+  .arow .c-name a { font-weight: 600; color: inherit; text-decoration: none; }
+  .arow .c-name a:hover { text-decoration: underline; }
+  .arow .c-status.warn { color: var(--warn); } .arow .c-status.bad { color: var(--bad); } .arow .c-status.busy { color: var(--accent); }
+  .arow .c-act { display: flex; gap: 6px; align-items: center; justify-content: flex-end; }
+  .sub { font-size: 12.5px; color: var(--muted); }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 8px; background: var(--ok); vertical-align: 1px; }
+  .dot.warn { background: var(--warn); } .dot.bad { background: var(--bad); } .dot.busy { background: var(--accent); }
+  .new { font-size: 11.5px; font-weight: 700; color: var(--ok); margin-left: 4px; }
+  .mode { font-size: 11.5px; padding: 0 7px; border-radius: 999px; margin-left: 6px; background: var(--chip); color: var(--muted); }
+  .mode.every-time { color: var(--warn); } .mode.remembered { color: var(--accent); }
+  .linkbtn { background: none; border: 0; padding: 0 2px; color: var(--accent); cursor: pointer; font-size: 13px; }
+  a.button { display: inline-block; font: inherit; padding: 6px 14px; border-radius: 7px; border: 1px solid var(--line); background: var(--panel); color: var(--text); text-decoration: none; }
+  a.button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  details.more { position: relative; }
+  details.more summary { list-style: none; cursor: pointer; padding: 5px 10px; border: 1px solid var(--line); border-radius: 7px; color: var(--muted); line-height: 1.3; }
+  details.more summary::-webkit-details-marker { display: none; }
+  details.more .menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 3; min-width: 210px; padding: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 20px rgba(0, 0, 0, .15); }
+  details.more .menu button, details.more .menu a { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 7px 10px; border-radius: 6px; color: var(--text); text-decoration: none; font-size: 14px; }
+  details.more .menu button:hover, details.more .menu a:hover { background: var(--chip); }
+  details.more .menu .sub { display: block; }
+  .attention { margin-bottom: 8px; }
+  .attention .lhead { color: var(--bad); }
+  @media (max-width: 720px) {
+    .arow { grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; }
+    .arow .c-act { grid-column: 2; grid-row: 1 / span 3; }
+    .summary { gap: 8px; } .tile { padding: 8px 10px; } .tile .who { display: none; }
+  }
+
   @media (max-width: 600px) { header { flex-wrap: wrap; gap: 8px; } .grid { grid-template-columns: 1fr; } th:nth-child(n+4), td:nth-child(n+4) { display: none; } }
 </style>
 </head>
@@ -191,6 +229,96 @@ function card(a) {
   </div>`;
 }
 
+// ---- Accounts overview
+
+const shortDay = v => new Date(v + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" });
+function ago(v) {
+  const m = (Date.now() - new Date(v)) / 60000;
+  if (m < 1) return "just now";
+  if (m < 60) return `${Math.round(m)} min ago`;
+  if (m < 60 * 24) return `${Math.round(m / 60)} h ago`;
+  return `${Math.round(m / 60 / 24)} d ago`;
+}
+const needsYou = a => ["needs-assist", "broken"].includes(a.auth.status) || a.issues.some(i => i.level === "action-needed");
+const openDoc = id => window.open(`/api/documents/${encodeURIComponent(id)}/file?key=${encodeURIComponent(KEY)}`, "_blank");
+const showDoc = (id, btn) => working(btn, "Opening…", () => post(`/documents/${encodeURIComponent(id)}/show`));
+
+/** What's going on with the account, in plain words: [tone, text]. Tone: ok, warn, bad or busy. */
+function statusLine(a) {
+  if (a.running) return ["busy", a.running === "assist" ? "Waiting for you in the browser window…" : "Checking now…"];
+  if (a.auth.status === "assisting") return ["busy", "Signing in…"];
+  if (a.auth.status === "needs-assist") return ["bad", "Needs you to sign in"];
+  if (a.auth.status === "broken") return ["bad", `Can't sign in${a.auth.explain ? `: ${a.auth.explain}` : ""}`];
+  const issue = a.issues.find(i => i.level === "action-needed");
+  if (issue) return ["bad", issue.title.startsWith(a.name + ": ") ? issue.title.slice(a.name.length + 2) : issue.title];
+  if (a.pendingReview) return ["warn", `${a.pendingReview} waiting for your review`];
+  if (a.auth.status === "unknown") return ["warn", "Not signed in yet"];
+  if (a.auth.status === "expiring-soon") return ["warn", "Sign-in expires soon"];
+  const e = a.estimate;
+  switch (a.decision.phase) {
+    case "learning": return ["ok", "Learning the schedule"];
+    case "overdue": return ["warn", `Late: expected by ${shortDay(e.windowEnd)} · checking daily`];
+    case "stale": return ["warn", `Nothing new since ${shortDay(e.lastDocumentDate)} · checking weekly`];
+    case "in-window": return ["ok", `Due now · checking until ${shortDay(e.windowEnd)}`];
+  }
+  return ["ok", e ? `Up to date · next due ~${shortDay(e.nextExpected)}` : "Up to date"];
+}
+
+/** The one button the account needs now: sign in, review, or check. */
+function mainAction(a) {
+  if (a.running || a.auth.status === "assisting") return `<button disabled>${a.running === "check" ? "Checking…" : "Signing in…"}</button>`;
+  if (["needs-assist", "unknown", "expiring-soon", "broken"].includes(a.auth.status)) return `<button class="primary" onclick="run('${a.id}','assist',this)">Sign in</button>`;
+  if (a.pendingReview) return `<a class="button primary" href="/review" data-nav>Review</a>`;
+  return `<button onclick="run('${a.id}','check',this)">Check now</button>`;
+}
+
+/** Everything else, in a menu. */
+function moreMenu(a) {
+  const busy = a.running || a.auth.status === "assisting" ? "disabled" : "";
+  const signInMain = ["needs-assist", "unknown", "expiring-soon", "broken"].includes(a.auth.status);
+  const shared = (a.sharesSignInWith || []).length ? ` Also checks ${esc(a.sharesSignInWith.join(", "))}.` : "";
+  const d = a.lastDocument;
+  return `<details class="more"><summary title="More" aria-label="More actions for ${esc(a.name)}">⋯</summary><div class="menu">
+    ${signInMain ? `<button ${busy} onclick="run('${a.id}','check',this)">Check now</button>`
+      : `<button ${busy} onclick="run('${a.id}','assist',this)">Sign in now<span class="sub">Opens a browser window, signs in, then checks for new ${esc(a.kind)}s.${shared}</span></button>`}
+    ${d ? `<button onclick="openDoc('${d.id}')">Open latest ${esc(a.kind)}</button><button onclick="showDoc('${d.id}',this)">Show in folder</button>` : ""}
+    <a href="/accounts/${a.id}" data-nav>Details and history</a>
+  </div></details>`;
+}
+
+function accountRow(a) {
+  const [tone, text] = statusLine(a);
+  const d = a.lastDocument;
+  const fresh = d?.firstSeenUtc && Date.now() - new Date(d.firstSeenUtc) < 7 * 864e5;
+  const mode = a.signIn && a.signIn.mode !== "own" ? `<span class="mode ${a.signIn.mode}" title="${esc(a.signIn.detail)}">${a.signIn.mode === "every-time" ? "you sign in" : "remembered"}</span>` : "";
+  return `<div class="arow">
+    <div class="c-name"><span class="dot ${tone}"></span><a href="/accounts/${a.id}" data-nav title="${esc(a.signIn?.title || "")}: ${esc(a.signIn?.detail || "")}">${esc(a.name)}</a>${mode}</div>
+    <div class="c-latest">${d ? `${day(d.date)} · ${money(d.amount)}${fresh ? `<span class="new">NEW</span>` : ""} <button class="linkbtn" onclick="openDoc('${d.id}')" title="Open the PDF">Open</button>`
+      : `<span class="muted">No ${esc(a.kind)}s yet</span>`}</div>
+    <div class="c-status ${tone}">${esc(text)}<div class="sub">${a.lastCheckedUtc ? `Checked ${ago(a.lastCheckedUtc)}` : "Not checked yet"}</div></div>
+    <div class="c-act">${mainAction(a)}${moreMenu(a)}</div>
+  </div>`;
+}
+
+/** Does anything need me? Then what's waiting, and what came in. */
+function summaryHtml(accounts) {
+  const needs = accounts.filter(needsYou);
+  const review = accounts.filter(a => a.pendingReview);
+  const fresh = accounts.filter(a => a.newThisWeek);
+  const count = (list, f) => list.reduce((n, a) => n + f(a), 0);
+  const names = list => esc(list.map(a => a.name).join(", "));
+  const tile = (n, label, tone, who, href) => `<${href ? `a href="${href}" data-nav` : "div"} class="tile ${n ? tone : ""}">
+      <div class="n">${n}</div><div class="l">${label}</div><div class="who" title="${who}">${who || "&nbsp;"}</div></${href ? "a" : "div"}>`;
+  const reviewCount = count(review, a => a.pendingReview), freshCount = count(fresh, a => a.newThisWeek);
+  const tiles = `<div class="summary">
+    ${tile(needs.length, needs.length === 1 ? "account needs you" : "accounts need you", "bad", names(needs), null)}
+    ${tile(reviewCount, "waiting for review", "warn", names(review), reviewCount ? "/review" : null)}
+    ${tile(freshCount, `new ${freshCount === 1 ? "document" : "documents"} this week`, "ok", names(fresh), null)}
+  </div>`;
+  const first = [...needs, ...review.filter(a => !needs.includes(a))];
+  return tiles + (first.length ? `<div class="list attention"><div class="lhead">Needs attention</div>${first.map(accountRow).join("")}</div>` : "");
+}
+
 let dashTags = store.get("dashTags", []);
 let collapsed = store.get("collapsed", []);
 
@@ -204,16 +332,17 @@ async function renderDashboard() {
   const chips = allTags.length ? `<div class="chips" style="margin-bottom:6px"><span class="muted" style="font-size:13px">Show:</span>
       ${allTags.map(t => `<button class="chip ${dashTags.includes(t) ? "on" : ""}" onclick="toggleDashTag('${esc(t)}')">${esc(t)}</button>`).join("")}
       ${dashTags.length ? `<a href="#" onclick="dashTags=[];store.set('dashTags',dashTags);render();return false" style="font-size:13px">clear</a>` : ""}</div>` : "";
-  if (!shown.length) return chips + `<div class="empty">No accounts have the selected tags.</div>`;
+  const top = summaryHtml(s.accounts);
+  if (!shown.length) return top + chips + `<div class="empty">No accounts have the selected tags.</div>`;
   const groups = byGroup(shown);
-  if (groups.length === 1 && groups[0][0] === NO_GROUP) return chips + `<div class="grid">${shown.map(card).join("")}</div>`;
-  return chips + groups.map(([g, list]) => {
+  if (groups.length === 1 && groups[0][0] === NO_GROUP) return top + chips + `<div class="list">${shown.map(accountRow).join("")}</div>`;
+  return top + chips + groups.map(([g, list]) => {
     const isCollapsed = collapsed.includes(g);
     const needs = list.filter(a => ["needs-assist", "broken"].includes(a.auth.status) || a.issues.some(i => i.level === "action-needed")).length;
     return `<div class="group-head ${isCollapsed ? "collapsed" : ""}" onclick="toggleGroup('${esc(g).replace(/'/g, "&#39;")}')">
         <span class="caret">▾</span><h2>${esc(g)}</h2><span class="muted">${list.length} account${list.length === 1 ? "" : "s"}</span>
         ${needs ? `<span class="pill s-needs-assist">${needs} need${needs === 1 ? "s" : ""} you</span>` : ""}</div>
-      ${isCollapsed ? "" : `<div class="grid">${list.map(card).join("")}</div>`}`;
+      ${isCollapsed ? "" : `<div class="list">${list.map(accountRow).join("")}</div>`}`;
   }).join("");
 }
 
@@ -233,11 +362,13 @@ async function renderAccount(id, assist) {
   const callout = assist && a.auth.status !== "healthy" ? `<div class="callout"><b>Sign in to ${esc(a.name)}</b>
     <p>Choosing <b>Sign in now</b> opens a browser window on this computer with your username and password filled in.
     Finish whatever the site asks (verification code, CAPTCHA) and tick “remember me” if it's offered. Any waiting ${esc(a.kind)}s are downloaded right after.</p></div>` : "";
-  const docs = d.documents.length ? `<table><tr><th>Date</th><th>Amount</th><th>Statement #</th><th>Actions</th><th>File</th></tr>
+  // Columns that are empty for every document are left out.
+  const hasNumber = d.documents.some(x => x.statementNumber), hasActions = d.documents.some(x => (x.actions || []).length);
+  const docs = d.documents.length ? `<table><tr><th>Date</th><th>Amount</th>${hasNumber ? "<th>Statement #</th>" : ""}${hasActions ? "<th>Actions</th>" : ""}<th>File</th></tr>
     ${d.documents.map(x => `<tr><td>${day(x.date)}${x.imported ? ' <span class="muted">(imported)</span>' : ""}${x.review === "pending" ? ' <span class="pill">review</span>' : ""}</td>
-      <td>${money(x.amount)}</td><td>${esc(x.statementNumber || "–")}</td>
-      <td>${(x.actions || []).map(r => `<div class="${r.succeeded ? "s-healthy" : "s-broken"}">${esc(r.type)}: ${esc(r.summary)}</div>`).join("") || '<span class="muted">–</span>'}</td>
-      <td><code>${esc(x.path.split(/[\\/]/).pop())}</code></td></tr>`).join("")}</table>`
+      <td>${money(x.amount)}</td>${hasNumber ? `<td>${esc(x.statementNumber || "–")}</td>` : ""}
+      ${hasActions ? `<td>${(x.actions || []).map(r => `<div class="${r.succeeded ? "s-healthy" : "s-broken"}">${esc(r.type)}: ${esc(r.summary)}</div>`).join("") || '<span class="muted">–</span>'}</td>` : ""}
+      <td><code>${esc(x.path.split(/[\\/]/).pop())}</code><br><button class="linkbtn" onclick="openDoc('${x.id}')">Open</button> · <button class="linkbtn" onclick="showDoc('${x.id}',this)">Show in folder</button></td></tr>`).join("")}</table>`
     : `<div class="empty">No ${esc(a.kind)}s on record. <button onclick="importHistory('${a.id}',this)">Import from folder</button></div>`;
   const signIns = d.signIns.length ? `<table><tr><th>When</th><th>Result</th><th>Helped</th><th>Remembered until</th><th>Machine</th></tr>
     ${d.signIns.map(e => `<tr><td>${when(e.atUtc)}</td><td class="${e.succeeded ? "s-healthy" : "s-broken"}">${e.succeeded ? "Signed in" : esc(e.reason)}${e.detail ? ` <span class="muted">${esc(e.detail)}</span>` : ""}</td>
@@ -263,7 +394,7 @@ async function renderReview() {
   return `<table><tr><th>Account</th><th>Date</th><th>Amount</th><th>Statement #</th><th>Will run</th><th></th></tr>
     ${items.map(x => `<tr><td>${esc(x.account)}</td><td>${day(x.date)}</td><td>${money(x.amount)}</td><td>${esc(x.statementNumber || "–")}</td>
       <td>${esc((x.actions || []).join(", "))}</td>
-      <td><button class="primary" onclick="review('${x.id}','approve',this)">Approve</button> <button onclick="review('${x.id}','reject',this)">Reject</button></td></tr>`).join("")}</table>`;
+      <td style="white-space:nowrap"><button onclick="openDoc('${x.id}')">Open PDF</button> <button class="primary" onclick="review('${x.id}','approve',this)">Approve</button> <button onclick="review('${x.id}','reject',this)">Reject</button></td></tr>`).join("")}</table>`;
 }
 
 async function renderIssues() {
@@ -512,7 +643,12 @@ async function render() {
   } catch (e) { $("#main").innerHTML = `<div class="issue"><b>Couldn't load</b>${esc(e.message)}</div>`; }
   refreshBadges();
   // The settings page isn't refreshed on a timer, so it never wipes what you're typing.
-  if (p !== "/settings") timer = setTimeout(render, document.querySelector("[disabled]") ? 3000 : 30000);
+  if (p !== "/settings") timer = setTimeout(renderUnlessMenuOpen, document.querySelector("[disabled]") ? 3000 : 30000);
+}
+/** A refresh would close an open menu under the pointer: wait until it's closed. */
+function renderUnlessMenuOpen() {
+  if (document.querySelector("details.more[open]")) { timer = setTimeout(renderUnlessMenuOpen, 3000); return; }
+  render();
 }
 
 async function run(id, kind, btn) {
@@ -547,6 +683,8 @@ async function importHistory(id, btn) {
 }
 
 document.addEventListener("click", e => {
+  // Close any open "more" menu when clicking elsewhere (or on one of its items).
+  document.querySelectorAll("details.more[open]").forEach(m => { if (!m.contains(e.target) || e.target.closest(".menu")) m.open = false; });
   const a = e.target.closest("a[data-nav]");
   if (!a || e.metaKey || e.ctrlKey) return;
   e.preventDefault();

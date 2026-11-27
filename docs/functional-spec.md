@@ -310,11 +310,16 @@ resolved and an info notification says so. The UI lists open and recent issues.
 
 A local web UI at `http://localhost:5187` (localhost only):
 
-- **Dashboard** — every account: sign-in state, last document, next expected window,
-  next check, open issues, and buttons *Check now* and *Sign in now*.
-- **Review** — documents waiting for approval.
+- **Dashboard** — a summary first (accounts that need you, documents waiting for review,
+  new documents this week, with the accounts needing attention listed on top), then one row
+  per account: its status in plain words, when it was last checked, the latest document
+  (*Open* shows the PDF), and the one action it needs now — *Sign in*, *Review* or
+  *Check now*. Everything else (*Sign in now*, open the latest document, show it in its
+  folder, details) is in the row's ⋯ menu.
+- **Review** — documents waiting for approval, each with *Open PDF*.
 - **Issues** — open issues and recent notifications.
-- **Account** — documents downloaded, learned cycle, sign-in history.
+- **Account** — documents downloaded (each with *Open* and *Show in folder*), learned cycle,
+  sign-in history.
 
 ## 10. Command line
 
