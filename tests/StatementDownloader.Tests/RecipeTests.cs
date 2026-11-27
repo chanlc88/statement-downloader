@@ -28,6 +28,7 @@ public class RecipeTests
     [InlineData("republic-services")]
     [InlineData("georgia-power")]
     [InlineData("chase")]
+    [InlineData("bank-of-america")]
     public void Signs_in_by_itself_in_a_browser_window(string id)
     {
         var site = new StatementDownloader.Sites.Recipes.RecipeSiteFetcher(Recipe(id));

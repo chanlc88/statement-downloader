@@ -8,8 +8,9 @@ website: https://www.bankofamerica.com
 verified: 2026-11-25
 notes: >
   Online ID + passcode, then a one-time code on new devices. The site refuses automated
-  browsers ("Access Denied"), so SD opens a regular Chrome window: choose Sign in now when SD
-  asks and enter any code. One login shows every account: Statements & Documents lists the current
+  browsers ("Access Denied"), so SD opens a regular Chrome window. Once BofA remembers this PC,
+  scheduled checks open it by themselves and sign in; if BofA asks for a code or blocks the
+  window, SD stops and asks you to choose Sign in now (it fills the login; you enter the code). One login shows every account: Statements & Documents lists the current
   year's statements for all of them as cards. Set siteOptions.account to the last four digits
   shown on the card ("Business Adv Relationship - 1234") — one SD account per BofA account.
   Card statements print the closing date and New Balance Total; bank statements the period
@@ -25,6 +26,7 @@ signIn:
   submit: '#secure-signin-submit'
   signedIn: 'a:has-text("Log out")'
   yourBrowser: true
+  unattended: true
 
 documents:
   steps:
