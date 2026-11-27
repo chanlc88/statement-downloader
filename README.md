@@ -65,6 +65,17 @@ dotnet run --project src/StatementDownloader.App -- paths           # shows wher
 | `install` / `uninstall` | Start the agent at sign-in |
 | `test-notify` | Send a test message to every notification channel |
 | `pdf-text <file>` | Show PDF text as parsers see it |
+| `accounts list\|add\|set\|preview`, `settings show\|set\|folders\|check\|init` | The Settings page on the command line, with JSON output (`--dry-run` checks a change without saving) |
+| `agent-guide [--write]` | Instructions for an AI agent setting the app up |
+
+## Setting up with an AI agent
+
+An AI agent that can run commands on your computer (Claude Code, Codex and similar) can set up your accounts,
+folders and notification emails for you. Open it in the config folder (`statement-downloader paths`), where
+`install` and `settings init` leave an `AGENTS.md` (and a `CLAUDE.md` pointing to it), or ask it to run
+`statement-downloader agent-guide`. The guide is [docs/agent-guide.md](docs/agent-guide.md). The agent only
+handles references to your logins, never the passwords: you store logins in Bitwarden, run `secrets set-token`
+yourself, and finish each first sign-in (`assist`) yourself.
 
 ## Adding a site
 
