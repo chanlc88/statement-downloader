@@ -4,7 +4,9 @@ namespace StatementDownloader.Tests;
 
 public class ConfigEditorTests
 {
-    private const string Yaml = """
+    // Raw string literals keep the source file's line endings, and a Windows checkout turns them
+    // into CRLF. The tests below edit this text with "\n" patterns, so pin it to LF.
+    private static readonly string Yaml = """
         # My config — comments must survive edits
         documentsRoot: "G:/My Drive"   # Google Drive on this PC
 
@@ -28,7 +30,7 @@ public class ConfigEditorTests
             credential: env:Y
             folder: Bills/Gas
             fileName: "{date:yyyy-MM-dd}-Gas.pdf"
-        """;
+        """.ReplaceLineEndings("\n");
 
     [Fact]
     public void Changes_one_account_and_keeps_everything_else()
