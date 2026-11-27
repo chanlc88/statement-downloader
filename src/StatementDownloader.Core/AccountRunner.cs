@@ -151,7 +151,15 @@ public sealed class AccountRunner(
 
     private async Task<DocumentRecord?> FileDocumentAsync(AccountConfig account, FoundDocument found, List<KnownDocument> known, DateTimeOffset now, CancellationToken ct)
     {
-        if (found.StatementNumber is { } sn && known.Any(k => k.StatementNumber == sn))
+        // Check against the store as it is now, not only as it was when the run started: a history
+        // import running at the same time may have added this document since.
+        var current = await documents.GetAsync(account.Id, ct);
+        var alreadyKnown = found.StatementNumber is { } sn
+            ? known.Any(k => k.StatementNumber == sn) || current.Any(d => d.StatementNumber == sn)
+            // Without a number the date identifies it; documents added earlier in this run don't
+            // count, as two can share a date.
+            : current.Any(d => d.StatementNumber is null && d.DocumentDate == found.DocumentDate && d.FirstSeenUtc != now);
+        if (alreadyKnown)
         {
             File.Delete(found.TempPath);
             return null;
