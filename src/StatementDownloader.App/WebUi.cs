@@ -281,6 +281,9 @@ public static class WebUi
         if (site?.NeedsPerson == true)
             return new { mode = "every-time", title = "Needs you every time",
                 detail = "This site refuses background sign-ins. When a check is due, SD asks you to choose Sign in now; a browser window opens, SD fills your login, and you finish any check or code." };
+        if (site?.OpensWindow == true)
+            return new { mode = "own", title = "Signs in on its own",
+                detail = "When a check is due, SD opens a Chrome window by itself, signs in, downloads and closes it. If the human check doesn't pass, it stops and asks you to choose Sign in now." };
         if (site?.EmailsCode == true && s.Config.Mailbox is not null)
             return new { mode = "own", title = "Signs in on its own",
                 detail = $"When the site emails a sign-in code, SD reads it from {s.Config.Mailbox.Username}." };

@@ -49,6 +49,11 @@ public sealed class SignInRecipe
     /// to that window once you're signed in and does the rest. Implies attended.
     /// </summary>
     public bool YourBrowser { get; set; }
+    /// <summary>
+    /// With <see cref="YourBrowser"/>: scheduled checks open the window by themselves and sign in once,
+    /// for sites whose human check passes on its own there. If it doesn't, they stop and ask you.
+    /// </summary>
+    public bool Unattended { get; set; }
     /// <summary>Page to open first; shows the sign-in form or, when remembered, the signed-in page.</summary>
     public string Url { get; set; } = "";
     public string Username { get; set; } = "";
@@ -269,6 +274,8 @@ public static class RecipeLoader
         Need(r.SignIn.Password, "signIn.password");
         Need(r.SignIn.Submit, "signIn.submit");
         Need(r.SignIn.SignedIn, "signIn.signedIn");
+        if (r.SignIn.Unattended && !r.SignIn.YourBrowser) e.Add("signIn.unattended needs signIn.yourBrowser.");
+        if (r.SignIn.Unattended && r.SignIn.Attended) e.Add("signIn.unattended and signIn.attended can't both be set.");
         if (r.SignIn.EmailCode is { } ec)
         {
             Compiles(ec.From, "signIn.emailCode.from");

@@ -65,6 +65,8 @@ public interface ISiteFetcher
     bool NeedsPerson => false;
     /// <summary>The site emails a sign-in code that can be read from the configured mailbox.</summary>
     bool EmailsCode => false;
+    /// <summary>Scheduled checks open a visible browser window by themselves (the site needs one, but not you).</summary>
+    bool OpensWindow => false;
     Task<SiteResult> RunAsync(SiteContext context, CancellationToken ct = default);
 }
 

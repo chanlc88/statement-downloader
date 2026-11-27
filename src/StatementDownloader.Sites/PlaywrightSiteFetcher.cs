@@ -41,13 +41,19 @@ public abstract class PlaywrightSiteFetcher : ISiteFetcher
     /// automated browsers even with the person present. Implies <see cref="AttendedOnly"/>.
     /// </summary>
     protected virtual bool YourBrowser => false;
-    public bool NeedsPerson => AttendedOnly || YourBrowser;
+    /// <summary>
+    /// With <see cref="YourBrowser"/>: scheduled checks open that window by themselves and sign in
+    /// once. If the human check doesn't pass, or the sign-in fails, they stop and ask the person.
+    /// </summary>
+    protected virtual bool YourBrowserUnattended => false;
+    public bool NeedsPerson => AttendedOnly || (YourBrowser && !YourBrowserUnattended);
+    public bool OpensWindow => YourBrowser && YourBrowserUnattended && !AttendedOnly;
     public virtual bool EmailsCode => false;
 
     public async Task<SiteResult> RunAsync(SiteContext ctx, CancellationToken ct = default)
     {
         // Don't keep knocking on a site that blocks unattended browsers: ask the person instead.
-        if ((AttendedOnly || YourBrowser) && !ctx.Interactive)
+        if (NeedsPerson && !ctx.Interactive)
             return SiteResult.AuthFailed(AuthFailureReason.AttendedOnly, null);
 
         using var playwright = await Playwright.CreateAsync();
@@ -117,7 +123,11 @@ public abstract class PlaywrightSiteFetcher : ISiteFetcher
         var signInSent = DateTimeOffset.Now;
         if (await HasSignInFormAsync(page, ct))
         {
-            personSubmits = ctx.Interactive && await HasHumanCheckAsync(page) && !await HumanCheckPassesAsync(page, TimeSpan.FromSeconds(15), ct);
+            var checkPending = await HasHumanCheckAsync(page) && !await HumanCheckPassesAsync(page, TimeSpan.FromSeconds(15), ct);
+            // Nobody there to pass it: sending the form would only fail the check. Ask the person.
+            if (checkPending && !ctx.Interactive)
+                return SiteResult.AuthFailed(AuthFailureReason.Captcha, "The human check didn't pass by itself.", await SaveDiagnosticsAsync(page, ctx, "sign-in"));
+            personSubmits = checkPending;
             await SubmitSignInAsync(page, ctx.Credential, ct, submit: !personSubmits);
             if (!personSubmits)
             {

@@ -9,8 +9,9 @@ verified: 2026-11-20
 notes: >
   Email + password sign-in (Auth0). The site refuses unattended (headless) browsers outright
   and may show a "verify you are human" check that automated browsers can't pass, so SD opens
-  a regular browser window: choose Sign in now when a bill is due; SD fills the sign-in form,
-  you pass any check and click Log in, and SD downloads by itself. Payments → Invoice
+  a regular browser window. There the check usually passes by itself, so scheduled checks open
+  the window, sign in once, download and close it; if the check doesn't pass, SD stops and asks
+  you to choose Sign in now (it fills the form; you pass the check and click Continue). Payments → Invoice
   History lists [invoice number, due date, amount]; clicking the invoice number opens the PDF
   in a new window. The list is inside a shadow DOM, which Playwright selectors reach directly.
   Use Current Invoice Charges as the amount: Total Amount Due can include credits or an
@@ -23,6 +24,7 @@ signIn:
   submit: 'button[name=action]'
   signedIn: ':text-is("Logout")'
   yourBrowser: true
+  unattended: true
 
 documents:
   steps:

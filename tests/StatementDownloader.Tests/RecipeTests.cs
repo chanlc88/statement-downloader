@@ -25,6 +25,14 @@ public class RecipeTests
     private static SiteRecipe Recipe(string id) => RecipeLoader.BuiltIn().Single(r => r.Id == id);
 
     [Fact]
+    public void Republic_signs_in_by_itself_in_a_browser_window()
+    {
+        var site = new StatementDownloader.Sites.Recipes.RecipeSiteFetcher(Recipe("republic-services"));
+        Assert.False(site.NeedsPerson);
+        Assert.True(site.OpensWindow);
+    }
+
+    [Fact]
     public void Westfield_reads_the_emailed_passcode()
     {
         var ec = Recipe("westfield").SignIn.EmailCode!;
@@ -149,7 +157,7 @@ public class RecipeTests
         const string yaml = """
             id: Bad Id
             name: ""
-            signIn: { url: "http://example.com", username: "#u", password: "#p", submit: "#s", signedIn: "#out" }
+            signIn: { url: "http://example.com", username: "#u", password: "#p", submit: "#s", signedIn: "#out", unattended: true }
             documents:
               steps: [ { click: "#a", goto: "/b" } ]
               list: { rows: "tr", date: { column: 0 }, link: { pattern: "no group" } }
@@ -157,7 +165,7 @@ public class RecipeTests
             parse: { date: "Date \\S+" }
             """;
         var ex = Assert.Throws<InvalidDataException>(() => RecipeLoader.Parse(yaml, "bad.yaml"));
-        foreach (var expected in new[] { "id is required", "name is required", "https://", "exactly one of click", "counts from 1", "link.pattern", "fetch, click or popup", "parse.date" })
+        foreach (var expected in new[] { "unattended needs signIn.yourBrowser", "id is required", "name is required", "https://", "exactly one of click", "counts from 1", "link.pattern", "fetch, click or popup", "parse.date" })
             Assert.Contains(expected, ex.Message);
     }
 
