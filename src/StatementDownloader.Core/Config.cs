@@ -164,7 +164,7 @@ public static class ConfigLoader
 {
     public static AppConfig Load(string path)
     {
-        if (!File.Exists(path)) throw new FileNotFoundException($"Config file not found: {path}. Copy config.sample.yaml there to start.", path);
+        if (!File.Exists(path)) throw new FileNotFoundException($"Config file not found: {path}. Run `statement-downloader settings init --documents-root <folder>`, or copy config.sample.yaml there, to start.", path);
         return Parse(File.ReadAllText(path));
     }
 

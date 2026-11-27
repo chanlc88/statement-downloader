@@ -17,6 +17,7 @@
 
   <ItemGroup>
     <EmbeddedResource Include="ui\index.html" LogicalName="index.html" />
+    <EmbeddedResource Include="..\..\docs\agent-guide.md" LogicalName="agent-guide.md" />
   </ItemGroup>
 
 </Project>

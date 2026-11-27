@@ -28,7 +28,12 @@ const string Usage = """
                                  (for writing emailCode patterns; default the last 72 hours)
       install | uninstall        Start / stop starting the agent at sign-in
       paths                      Show config and data locations
-    """;
+      sites --json               Supported sites with the options each takes (JSON)
+
+    Setting up with an AI agent: these commands do what the Settings page does, with JSON output.
+    Run `statement-downloader agent-guide` for instructions written for the agent.
+
+    """ + AgentCommands.Usage;
 
 Console.OutputEncoding = System.Text.Encoding.UTF8;
 var argList = args.ToList();
@@ -46,6 +51,8 @@ if (dataPath is not null) paths = paths with { DataDir = Path.GetFullPath(dataPa
 
 try
 {
+    if (AgentCommands.RunWithoutServices(paths, argList) is { } done) return done;
+
     switch (command)
     {
         case "help" or "--help" or "-h":
@@ -75,6 +82,9 @@ try
             return Microsoft.Playwright.Program.Main(["install", "chromium"]);
 
         case "install":
+            // An agent opened in the config folder finds how to set the app up.
+            if (File.Exists(paths.ConfigFile))
+                foreach (var file in AgentCommands.WriteGuide(paths, Path.GetDirectoryName(paths.ConfigFile)!)) Console.WriteLine($"Wrote {file}");
             return Install.Register(configPath);
 
         case "uninstall":
@@ -191,11 +201,12 @@ try
             }
 
         default:
+            if (await AgentCommands.RunAsync(services, argList) is { } code) return code;
             Console.Error.WriteLine($"Unknown command '{command}'.\n\n{Usage}");
             return 1;
     }
 }
-catch (Exception ex) when (ex is FileNotFoundException or InvalidDataException or ArgumentException)
+catch (Exception ex) when (ex is FileNotFoundException or InvalidDataException or ArgumentException or SettingsProblem)
 {
     Console.Error.WriteLine(ex.Message);
     return 1;

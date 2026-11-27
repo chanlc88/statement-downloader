@@ -172,238 +172,43 @@ public static class WebUi
             return Results.Ok();
         });
 
-        // Settings: where documents are saved. Edits config.yaml in place (keeping comments) and
-        // applies the change to the running agent, so no restart is needed.
-        api.MapGet("/settings", async (AppServices s, CancellationToken ct) => Results.Ok(await SettingsView(s, ct)));
+        // Settings: where documents are saved, groups, tags and notifications. SettingsService edits
+        // config.yaml in place (keeping comments) and applies the change to the running agent, so no
+        // restart is needed. The command line sends its changes here too while the agent runs.
+        api.MapGet("/settings", async (AppServices s, CancellationToken ct) => Results.Ok(await SettingsService.ViewAsync(s, ct)));
 
         api.MapGet("/settings/preview", async (string account, string? folder, string? fileName, string? root, AppServices s, CancellationToken ct) =>
-        {
-            // A new account (not saved yet) has no entry: preview it under the id it will get.
-            var a = s.Config.Accounts.FirstOrDefault(x => x.Id == account) ?? new AccountConfig { Id = string.IsNullOrWhiteSpace(account) ? "new-account" : account };
-            folder ??= a.Folder; fileName ??= a.FileName; root = string.IsNullOrWhiteSpace(root) ? s.Config.DocumentsRoot : ConfigLoader.ExpandHome(root.Trim());
-            var problem = AccountLocation.FolderProblem(folder) ?? AccountLocation.FileNameProblem(fileName);
-            if (problem is not null) return Results.Ok(new { problem });
-            var path = await ExamplePathAsync(s, a, root, folder, fileName, ct);
-            return Results.Ok(new { path, relative = Relative(root, path) });
-        });
+            Results.Ok(await SettingsService.PreviewAsync(s, account, folder, fileName, root, ct)));
 
         // Existing subfolders of the base folder, for suggestions while typing a folder.
         api.MapGet("/settings/folders", (string? under, AppServices s) =>
         {
-            var rel = (under ?? "").Replace('\\', '/').Trim('/');
-            if (rel.Split('/').Any(p => p == "..") || Path.IsPathRooted(rel)) return Results.BadRequest();
-            var dir = Path.Combine(s.Config.DocumentsRoot, rel);
-            if (!Directory.Exists(dir)) return Results.Ok(new { folders = Array.Empty<string>() });
-            try
-            {
-                var folders = new DirectoryInfo(dir).EnumerateDirectories()
-                    .Where(d => !d.Name.StartsWith('.') && !d.Attributes.HasFlag(FileAttributes.Hidden))
-                    .Select(d => rel.Length == 0 ? d.Name : rel + "/" + d.Name)
-                    .Order(StringComparer.OrdinalIgnoreCase).Take(300).ToList();
-                return Results.Ok(new { folders });
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return Results.Ok(new { folders = Array.Empty<string>() }); }
+            try { return Results.Ok(new { folders = SettingsService.Folders(s, under) }); }
+            catch (SettingsProblem) { return Results.BadRequest(); }
         });
 
         // The sites accounts can be added for, with what each needs.
-        api.MapGet("/sites", (AppServices s) => Results.Ok(s.Sites.Values
-            .Select(x => (x as StatementDownloader.Sites.Recipes.RecipeSiteFetcher)?.Recipe)
-            .OfType<StatementDownloader.Sites.Recipes.SiteRecipe>()
-            .OrderBy(r => r.Name, StringComparer.OrdinalIgnoreCase)
-            .Select(r => new { r.Id, r.Name, r.Kind, r.Website, r.Notes, options = r.Options, signIn = r.SignIn.YourBrowser || r.SignIn.Attended ? "window" : "background" })));
+        api.MapGet("/sites", (AppServices s) => Results.Ok(SettingsService.SitesView(s.Sites.Values)));
 
         // Adds an account to config.yaml, checks its login can be read, and imports the documents
         // already in its folder. The first sign-in is left to the person (Sign in now).
         write.MapPost("/settings/accounts", async (NewAccount n, AppServices s, CancellationToken ct) =>
         {
-            await SettingsLock.WaitAsync(ct);
-            AccountConfig added;
             try
             {
-                if (string.IsNullOrWhiteSpace(n.Name)) return Results.BadRequest(new { error = "Give the account a name." });
-                if (s.Sites.GetValueOrDefault(n.Site ?? "") is not StatementDownloader.Sites.Recipes.RecipeSiteFetcher site) return Results.BadRequest(new { error = "Choose a site." });
-                var credential = (n.Credential ?? "").Trim();
-                if (credential.Length == 0) return Results.BadRequest(new { error = "Enter the login: a Bitwarden secret id, or a reference such as keychain:name." });
-                if (Guid.TryParse(credential, out _)) credential = "bitwarden:" + credential;
-                var folder = (n.Folder ?? "").Trim().Replace('\\', '/').Trim('/');
-                var fileName = (n.FileName ?? "").Trim();
-                if ((AccountLocation.FolderProblem(folder) ?? AccountLocation.FileNameProblem(fileName)) is { } problem) return Results.BadRequest(new { error = problem });
-                try { await s.Secrets.GetCredentialAsync(credential, ct); }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    return Results.BadRequest(new { error = $"Couldn't read that login: {ex.Message}" });
-                }
-
-                var slug = System.Text.RegularExpressions.Regex.Replace(n.Name.Trim().ToLowerInvariant(), "[^a-z0-9]+", "-").Trim('-');
-                if (slug.Length == 0) slug = site.SiteId;
-                var id = slug;
-                for (var i = 2; s.Config.Accounts.Any(a => a.Id == id); i++) id = $"{slug}-{i}";
-
-                var options = (n.Options ?? []).Where(kv => site.Recipe.Options.ContainsKey(kv.Key) && !string.IsNullOrWhiteSpace(kv.Value))
-                    .ToDictionary(kv => kv.Key, kv => kv.Value.Trim());
-                var tags = ConfigEditor.NormalizeTags(n.Tags ?? []);
-                var q = ConfigEditor.QuoteValue;
-                var entries = new List<(string, string)> { ("id", id), ("name", q(n.Name.Trim())) };
-                if (!string.IsNullOrWhiteSpace(n.Group)) entries.Add(("group", q(n.Group.Trim())));
-                if (tags.Count > 0) entries.Add(("tags", "[" + string.Join(", ", tags.Select(q)) + "]"));
-                entries.Add(("site", site.SiteId));
-                entries.Add(("kind", site.Recipe.Kind));
-                if (options.Count > 0) entries.Add(("siteOptions", "{ " + string.Join(", ", options.Select(kv => $"{kv.Key}: {q(kv.Value)}")) + " }"));
-                entries.Add(("credential", credential));
-                entries.Add(("folder", q(folder)));
-                entries.Add(("fileName", q(fileName)));
-                entries.Add(("schedule", "auto"));
-
-                var path = s.Paths.ConfigFile;
-                var yaml = ConfigEditor.AddAccount(await File.ReadAllTextAsync(path, ct), entries);
-                AppConfig saved;
-                try { saved = ConfigEditor.Check(yaml); }
-                catch (Exception ex) when (ex is InvalidDataException or YamlDotNet.Core.YamlException) { return Results.BadRequest(new { error = ex.Message }); }
-                ConfigEditor.Save(path, yaml);
-                added = saved.Accounts.Single(a => a.Id == id);
-                // A new list rather than Add: a check may be going through the old one.
-                s.Config.Accounts = [.. s.Config.Accounts, added];
+                var added = await SettingsService.AddAccountAsync(s, n, ct: ct);
+                return Results.Ok(new { id = added.Id, imported = added.Imported });
             }
-            finally { SettingsLock.Release(); }
-
-            var (imported, _) = await HistoryImport.RunAsync(s, added, ct);
-            return Results.Ok(new { id = added.Id, imported });
+            catch (SettingsProblem ex) { return Results.BadRequest(new { error = ex.Message }); }
         });
 
         write.MapPost("/settings", async (SettingsChange change, AppServices s, CancellationToken ct) =>
         {
-            await SettingsLock.WaitAsync(ct);
-            try
-            {
-                var path = s.Paths.ConfigFile;
-                var yaml = await File.ReadAllTextAsync(path, ct);
-                var root = change.DocumentsRoot?.Trim();
-                if (root is not null)
-                {
-                    if (root.Length == 0) return Results.BadRequest(new { error = "The base folder is required." });
-                    yaml = ConfigEditor.SetDocumentsRoot(yaml, root.Replace('\\', '/'));
-                }
-                foreach (var a in change.Accounts ?? [])
-                {
-                    var account = s.Account(a.Id);
-                    var folder = (a.Folder ?? account.Folder).Trim().Replace('\\', '/').Trim('/');
-                    var fileName = (a.FileName ?? account.FileName).Trim();
-                    if ((AccountLocation.FolderProblem(folder) ?? AccountLocation.FileNameProblem(fileName)) is { } problem)
-                        return Results.BadRequest(new { error = $"{account.DisplayName}: {problem}" });
-                    if (folder != account.Folder) yaml = ConfigEditor.SetAccountValue(yaml, account.Id, "folder", folder);
-                    if (fileName != account.FileName) yaml = ConfigEditor.SetAccountValue(yaml, account.Id, "fileName", fileName);
-                    if (a.Group is { } group && group.Trim() != (account.Group ?? "")) yaml = ConfigEditor.SetAccountGroup(yaml, account.Id, group);
-                    if (a.Tags is { } tags && !ConfigEditor.NormalizeTags(tags).SequenceEqual(account.Tags)) yaml = ConfigEditor.SetAccountTags(yaml, account.Id, tags);
-                    if (a.Notify is { } notify && notify != account.Notify) yaml = ConfigEditor.SetAccountNotify(yaml, account.Id, notify);
-                }
-                if (change.Notifications is { } nc)
-                {
-                    if (nc.Enabled is { } on && on != s.Config.Notifications.Enabled) yaml = ConfigEditor.SetNotificationsEnabled(yaml, on);
-                    if (nc.Groups is { } groups)
-                    {
-                        var list = new List<(string, IReadOnlyList<string>, bool)>();
-                        foreach (var g in groups.Where(g => !string.IsNullOrWhiteSpace(g.Name)))
-                        {
-                            var email = (g.Email ?? []).SelectMany(e => e.Split([',', ';', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-                                .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-                            if (email.Select(ConfigLoader.EmailProblem).OfType<string>().FirstOrDefault() is { } bad) return Results.BadRequest(new { error = $"{g.Name.Trim()}: {bad}" });
-                            // A group with no addresses and notifications on needs no entry: it uses the channel's own 'to'.
-                            if (email.Count > 0 || g.Enabled == false) list.Add((g.Name.Trim(), email, g.Enabled != false));
-                        }
-                        yaml = ConfigEditor.SetNotificationGroups(yaml, list);
-                    }
-                }
-
-                AppConfig saved;
-                try { saved = ConfigEditor.Check(yaml); }
-                catch (Exception ex) when (ex is InvalidDataException or YamlDotNet.Core.YamlException) { return Results.BadRequest(new { error = ex.Message }); }
-                ConfigEditor.Save(path, yaml);
-
-                // Apply to the running agent.
-                s.Config.DocumentsRoot = saved.DocumentsRoot;
-                foreach (var a in s.Config.Accounts)
-                    if (saved.Accounts.FirstOrDefault(x => x.Id == a.Id) is { } n) { a.Folder = n.Folder; a.FileName = n.FileName; a.Group = n.Group; a.Tags = n.Tags; a.Notify = n.Notify; }
-                s.Config.Notifications.Enabled = saved.Notifications.Enabled;
-                s.Config.Notifications.Groups = saved.Notifications.Groups;
-                return Results.Ok(await SettingsView(s, ct));
-            }
-            catch (InvalidDataException ex) { return Results.BadRequest(new { error = ex.Message }); }
-            finally { SettingsLock.Release(); }
+            try { return Results.Ok(await SettingsService.ApplyAsync(s, change, ct: ct)); }
+            catch (SettingsProblem ex) { return Results.BadRequest(new { error = ex.Message }); }
         });
 
         return app;
-    }
-
-    private static readonly SemaphoreSlim SettingsLock = new(1, 1);
-
-    public sealed record SettingsChange(string? DocumentsRoot, List<AccountLocationChange>? Accounts, NotificationsChange? Notifications = null);
-    public sealed record NotificationsChange(bool? Enabled, List<GroupNotificationsChange>? Groups);
-    public sealed record GroupNotificationsChange(string Name, List<string>? Email, bool? Enabled);
-    public sealed record NewAccount(string? Name, string? Site, string? Group, List<string>? Tags, Dictionary<string, string>? Options, string? Credential, string? Folder, string? FileName);
-    public sealed record AccountLocationChange(string Id, string? Folder, string? FileName, string? Group = null, List<string>? Tags = null, bool? Notify = null);
-
-    private static async Task<object> SettingsView(AppServices s, CancellationToken ct)
-    {
-        var accounts = new List<object>();
-        foreach (var a in s.Config.Accounts)
-        {
-            var example = await ExamplePathAsync(s, a, s.Config.DocumentsRoot, a.Folder, a.FileName, ct);
-            accounts.Add(new { a.Id, name = a.DisplayName, a.Site, group = a.Group, tags = a.Tags, notify = a.Notify, sharesSignInWith = Logins.Siblings(s.Config, a).Select(x => x.DisplayName), a.Folder, a.FileName, example, relative = Relative(s.Config.DocumentsRoot, example) });
-        }
-        return new
-        {
-            configFile = s.Paths.ConfigFile,
-            documentsRoot = s.Config.DocumentsRoot,
-            documentsRootExists = Directory.Exists(s.Config.DocumentsRoot),
-            groups = s.Config.Accounts.Select(a => a.Group).OfType<string>().Where(g => g.Length > 0).Distinct().Order(StringComparer.OrdinalIgnoreCase),
-            tags = s.Config.Accounts.SelectMany(a => a.Tags).Distinct().Order(StringComparer.OrdinalIgnoreCase),
-            accounts,
-            notifications = NotificationsView(s),
-        };
-    }
-
-    /// <summary>Who gets which notifications: the on/off switch, each group's addresses, and the email channels.</summary>
-    private static object NotificationsView(AppServices s)
-    {
-        var n = s.Config.Notifications;
-        var emailChannels = n.Channels.Where(c => c.GetValueOrDefault("type") == "email").ToList();
-        var emailNames = emailChannels.Select(c => c.GetValueOrDefault("name") ?? "email").ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var levels = new[] { ("actionNeeded", "action needed"), ("headsUp", "heads-ups"), ("info", "info (new documents, approvals waiting)") };
-        var groupNames = s.Config.Accounts.Select(a => a.Group).OfType<string>().Concat(n.Groups.Keys)
-            .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase);
-        return new
-        {
-            enabled = n.Enabled,
-            emailChannels = emailNames,
-            // Which levels go by email at all (routes), so the page can say what recipients will get.
-            emailedLevels = levels.Where(l => n.Routes.GetValueOrDefault(l.Item1)?.Any(emailNames.Contains) == true).Select(l => l.Item2),
-            defaultTo = emailChannels.Select(c => c.GetValueOrDefault("to")).OfType<string>().FirstOrDefault(),
-            groups = groupNames.Select(g => new
-            {
-                name = g,
-                email = n.Group(g)?.Email ?? [],
-                enabled = n.Group(g)?.Enabled ?? true,
-                accounts = s.Config.Accounts.Count(a => string.Equals(a.Group, g, StringComparison.OrdinalIgnoreCase)),
-            }),
-            ungrouped = s.Config.Accounts.Count(a => a.Group is null),
-        };
-    }
-
-    private static string Relative(string root, string path)
-    {
-        var r = Path.GetRelativePath(Path.GetFullPath(root), path);
-        return r.StartsWith("..", StringComparison.Ordinal) ? path : r.Replace('\\', '/');
-    }
-
-    /// <summary>Where the newest document on record would be saved with these settings (or a made-up one dated today).</summary>
-    private static async Task<string> ExamplePathAsync(AppServices s, AccountConfig a, string root, string folder, string fileName, CancellationToken ct)
-    {
-        var last = (await s.Documents.GetAsync(a.Id, ct)).OrderByDescending(d => d.DocumentDate).FirstOrDefault();
-        var date = last?.DocumentDate ?? DateOnly.FromDateTime(DateTime.Today);
-        var statement = last?.StatementNumber ?? "12345678";
-        return Path.GetFullPath(Path.Combine(root,
-            FileNameTemplate.Render(folder, a, date, statement),
-            FileNameTemplate.Render(fileName, a, date, statement)));
     }
 
     private static IResult StartRun(AppServices s, RunTracker runs, string id, bool interactive)
