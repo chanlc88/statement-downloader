@@ -251,3 +251,34 @@ public class ConfigTests
         Assert.Contains("date token", ex.Message);
     }
 }
+
+public class JsonFileTests
+{
+    private sealed class State { public int N { get; set; } }
+
+    [Fact]
+    public async Task Reads_while_the_file_is_being_replaced_dont_fail()
+    {
+        var dir = Directory.CreateTempSubdirectory("sd-json-");
+        try
+        {
+            var path = Path.Combine(dir.FullName, "state.json");
+            await JsonFile.WriteAsync(path, new State());
+            using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            var writer = Task.Run(async () =>
+            {
+                for (var i = 1; !stop.IsCancellationRequested; i++) await JsonFile.UpdateAsync<State>(path, s => s.N = i);
+            });
+            var readers = Enumerable.Range(0, 4).Select(_ => Task.Run(async () =>
+            {
+                var reads = 0;
+                while (!stop.IsCancellationRequested) { Assert.NotNull(await JsonFile.ReadAsync<State>(path)); reads++; }
+                return reads;
+            })).ToList();
+            await writer;
+            Assert.All(await Task.WhenAll(readers), r => Assert.True(r > 0));
+            Assert.True((await JsonFile.ReadAsync<State>(path))!.N > 1);
+        }
+        finally { dir.Delete(recursive: true); }
+    }
+}
