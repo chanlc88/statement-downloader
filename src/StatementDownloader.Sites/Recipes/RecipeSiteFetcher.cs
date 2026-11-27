@@ -167,7 +167,7 @@ public sealed class RecipeSiteFetcher(SiteRecipe recipe) : PlaywrightSiteFetcher
             }
             var path = d.Download switch
             {
-                "click" => await DownloadByClickAsync(page, linkElement, ctx.WorkDir, name),
+                "click" => await DownloadByClickAsync(page, linkElement, ctx.WorkDir, name, list.Confirm),
                 "popup" => await DownloadByPopupAsync(page, browser, linkElement, ctx.WorkDir, name),
                 _ => await DownloadPdfAsync(browser, new Uri(new Uri(baseUrl), doc.Link).ToString(), ctx.WorkDir, name),
             };
@@ -180,6 +180,14 @@ public sealed class RecipeSiteFetcher(SiteRecipe recipe) : PlaywrightSiteFetcher
             if (parsed is null)
             {
                 ctx.Log.LogWarning("{Site}: the {Kind} dated {Date} downloaded but its text didn't match the recipe", SiteId, recipe.Kind, doc.Date);
+                continue;
+            }
+            // Several accounts on one login: never file another account's document under this one.
+            if (recipe.Parse.AccountOption is { } option && ctx.Account.SiteOptions.GetValueOrDefault(option) is { Length: > 0 } mine
+                && parsed.AccountNumber is { } theirs && !theirs.EndsWith(mine.Trim(), StringComparison.OrdinalIgnoreCase))
+            {
+                ctx.Log.LogWarning("{Site}: skipped a {Kind} for account …{Theirs}; this account is …{Mine}", SiteId, recipe.Kind, theirs, mine);
+                File.Delete(path);
                 continue;
             }
             if (parsed.StatementNumber is { } sn && known.Contains(sn)) { File.Delete(path); continue; }

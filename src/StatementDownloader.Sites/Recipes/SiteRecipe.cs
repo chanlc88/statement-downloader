@@ -133,6 +133,11 @@ public sealed class ListRecipe
     /// <c>xpath=following-sibling::tr[1]//a</c> to reach into that panel.
     /// </summary>
     public string? Expand { get; set; }
+    /// <summary>
+    /// With <c>download: click</c>: an element on the page to click after the link, when the link
+    /// opens a dialog (e.g. choosing the file type) whose button starts the download.
+    /// </summary>
+    public string? Confirm { get; set; }
 }
 
 /// <summary>A value in a row: a 1-based table cell, or the text of a selector, optionally narrowed by a regex.</summary>
@@ -163,6 +168,11 @@ public sealed class ParseRecipe
     public PatternList AccountNumber { get; set; } = [];
     /// <summary>Extra date formats beyond the common US ones.</summary>
     public List<string> DateFormats { get; set; } = [];
+    /// <summary>
+    /// A site option the document's account number must end with (e.g. <c>account</c>). A
+    /// downloaded document for another account on the same login is then skipped, not filed.
+    /// </summary>
+    public string? AccountOption { get; set; }
 }
 
 /// <summary>One regex or a list of them.</summary>

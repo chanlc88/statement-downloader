@@ -145,6 +145,7 @@ so a failing sign-in can't loop.
 | `list.link.selector` | the row | Element in the row that leads to the PDF. |
 | `list.link.attribute` | `href` | Attribute holding the URL. |
 | `list.link.pattern` | | Regex to pull the URL out of the attribute (e.g. from an `onclick`). |
+| `list.confirm` | | With `download: click`: an element on the page to click after the link, when the link opens a dialog (for example a file-type choice) whose button starts the download. |
 | `list.expand` | | Element in the row to click first when the link is in a details panel the row opens, or is covered until the row is opened. The link selector can reach into the panel with `xpath=following-sibling::tr[1]//a`. |
 | `download` | `fetch` | `fetch`: request the URL with the browser's cookies (fast, works for direct PDF links). `click`: click the link and save the file the browser downloads — the link then needs no URL (script-driven buttons are fine). `popup`: click the link; the site opens the PDF in a new window (often a `blob:` address made by its own script), which is saved and closed. Use it when the site fetches PDFs with its own sign-in token, so a plain `fetch` gets "Unauthorized". |
 | `firstRunLookback` | `400d` | With nothing on record yet, how far back to download. |
@@ -168,6 +169,7 @@ Read from the PDF's text, exactly as `statement-downloader pdf-text <file>` prin
 | `statementNumber` | | Statement or invoice number. Used to avoid duplicates and in action references, so worth having. |
 | `amount` | | The amount to record — usually this period's charges rather than a total that includes past balances. |
 | `accountNumber` | | Your account number with the company. |
+| `accountOption` | | A site option the account number must end with, e.g. `account`, for logins with several accounts: a downloaded document for another account is skipped rather than filed under this one. |
 
 Each can be one pattern or a list; the first that matches wins. A statement number equal
 to the account number is discarded (it means a pattern matched the wrong label).

@@ -304,9 +304,14 @@ public abstract class PlaywrightSiteFetcher : ISiteFetcher
     }
 
     /// <summary>Clicks something that triggers a file download and saves it.</summary>
-    protected static async Task<string?> DownloadByClickAsync(IPage page, ILocator target, string workDir, string name)
+    /// <param name="confirm">Clicked after <paramref name="target"/> when that opens a dialog whose button starts the download.</param>
+    protected static async Task<string?> DownloadByClickAsync(IPage page, ILocator target, string workDir, string name, string? confirm = null)
     {
-        var download = await page.RunAndWaitForDownloadAsync(() => target.ClickAsync(), new PageRunAndWaitForDownloadOptions { Timeout = 60_000 });
+        var download = await page.RunAndWaitForDownloadAsync(async () =>
+        {
+            await target.ClickAsync();
+            if (confirm is not null) await page.Locator(confirm).First.ClickAsync(new LocatorClickOptions { Timeout = 15_000 });
+        }, new PageRunAndWaitForDownloadOptions { Timeout = 60_000 });
         var path = Path.Combine(workDir, name);
         await download.SaveAsAsync(path);
         return PdfText.LooksLikePdf(await File.ReadAllBytesAsync(path)) ? path : null;

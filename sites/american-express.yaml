@@ -1,0 +1,82 @@
+# American Express — personal cards (americanexpress.com).
+# Format: docs/site-recipes.md. Regexes are written in 'single quotes' so backslashes stay as-is.
+id: american-express
+name: American Express (personal cards)
+kind: statement
+region: US
+website: https://www.americanexpress.com
+verified: 2026-11-27
+notes: >
+  User ID + password; new devices get a one-time code. One login shows every card: set
+  siteOptions.account to the card's last five digits as the site shows them (••••12345), one SD
+  account per card. Statements & Activity → Statements lists closing dates for the card chosen in
+  the switcher at the top: the last six under Recent Statements, about two more years under Older
+  Statements (opened here so a catch-up can reach them). Download opens a file-type dialog with
+  the billing statement PDF already chosen; its Download button saves it. Each PDF prints the
+  card's last five digits, so a statement for another card is never filed under this one. A
+  feedback survey sometimes pops up over the page; it is declined.
+
+options:
+  account: The card's last five digits as the site shows them (••••12345), e.g. 12345.
+
+signIn:
+  url: https://global.americanexpress.com/activity/statements
+  username: '#eliloUserID'
+  password: '#eliloPassword'
+  submit: '#loginSubmit'
+  signedIn: ':text-is("Log Out")'
+  yourBrowser: true
+  unattended: true
+
+documents:
+  steps:
+    - goto: https://global.americanexpress.com/activity/statements
+    - waitFor: '[data-testid="simple_switcher_combobox"]'
+      timeout: 60s
+    # A feedback survey ("Please share your feedback!") sometimes covers the page: decline it.
+    - click: 'button:has-text("No, Thanks")'
+      timeout: 3s
+      optional: true
+    # Choose the card in the switcher; the list updates in place.
+    - click: '[data-testid="simple_switcher_combobox"]'
+    - click: '[role=option]:has-text("{account}")'
+    - waitFor: '[data-testid="simple_switcher_combobox"]:has-text("{account}")'
+    - click: '#header-older-statements[aria-expanded="false"]'
+      timeout: 5s
+      optional: true
+    - click: 'button:has-text("No, Thanks")'
+      timeout: 3s
+      optional: true
+  list:
+    # Recent and older statements; not the year-end summaries.
+    rows: 'div.border-t:has(> [data-testid*="-statements/"][data-testid$="/date"])'
+    date: { selector: '[data-testid$="/date"]' }
+    link: { selector: '[data-testid$="/download-button"]' }
+    confirm: '[data-test-id$="download-confirm-anchor"]'
+  download: click
+
+parse:
+  require: 'americanexpress\.com'
+  date: 'Closing Date\s*(\d{2}/\d{2}/\d{2})'
+  dateFormats: ['MM/dd/yy', 'MMMM d, yyyy']
+  accountNumber: 'Account Ending\s*\d-(\d{5})'
+  accountOption: account
+  amount: 'New Balance\s*(-?\$[\d,]+\.\d{2})'
+
+# Checked by the test suite. Made-up numbers only; text is in the order `pdf-text` prints it.
+tests:
+  documents:
+    - text: >-
+        Example Card® from American Express EXAMPLE NAME Closing Date 11/20/26 Account Ending 1-12345
+        Customer Care: 1-800-000-0000 Website: americanexpress.com Payment Due Date 12/16/26
+        New Balance $310.40 AutoPay Amount $310.40
+      expect: { date: 2026-11-20, amount: 310.40, accountNumber: '12345' }
+    - text: >-
+        Example Gold Card EXAMPLE NAME Closing Date 10/16/26 Account Ending 2-67890 Website:
+        americanexpress.com New Balance -$12.34 Minimum Payment Due $0.00
+      expect: { date: 2026-10-16, amount: -12.34, accountNumber: '67890' }
+    - text: 'Chase chase.com Closing Date 10/16/26 New Balance $1.00'
+      expect: null
+  rows:
+    - cells: ['November 20, 2026']
+      expect: { date: 2026-11-20, url: '' }

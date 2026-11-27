@@ -16,7 +16,7 @@ especially when a site needs you to sign in.
   [run your own script](docs/functional-spec.md#53-actions) — for example one that
   records the bill in your accounting system.
 
-> Status: early. Seven site recipes so far (Bank of America and Chase statements; DeKalb County water,
+> Status: early. Eight site recipes so far (American Express, Bank of America and Chase statements; DeKalb County water,
 > Georgia Power and SCANA Energy gas in Georgia; Republic Services waste; and Westfield Insurance bills), verified against the live sites. See [docs/](docs/) for the spec, architecture and recipe format.
 
 ## Quick start
