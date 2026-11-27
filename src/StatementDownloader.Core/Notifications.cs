@@ -44,6 +44,8 @@ public sealed class HeldNotification
     public bool Digest { get; set; }
     /// <summary>The issue it announces, if any: dropped if that issue is resolved before release.</summary>
     public string? IssueKey { get; set; }
+    /// <summary>When it was held (null in data from older versions).</summary>
+    public DateTimeOffset? QueuedUtc { get; set; }
 }
 
 public sealed class NotificationLogEntry
@@ -167,7 +169,7 @@ public sealed class NotificationCenter(
 
         if (holdUntil is { } until)
         {
-            await JsonFile.UpdateAsync<NotificationData>(FilePath, d => d.Held.Add(new HeldNotification { Notification = n, ReleaseAfterUtc = until, Digest = digest, IssueKey = issueKey }), ct);
+            await JsonFile.UpdateAsync<NotificationData>(FilePath, d => d.Held.Add(new HeldNotification { Notification = n, ReleaseAfterUtc = until, Digest = digest, IssueKey = issueKey, QueuedUtc = now }), ct);
             log.LogInformation("Held notification until {Until}: {Title}", until, n.Title);
             return;
         }

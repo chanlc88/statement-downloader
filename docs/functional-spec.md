@@ -317,9 +317,13 @@ A local web UI at `http://localhost:5187` (localhost only):
   *Check now*. Everything else (*Sign in now*, open the latest document, show it in its
   folder, details) is in the row's ⋯ menu.
 - **Review** — documents waiting for approval, each with *Open PDF*.
-- **Issues** — open issues and recent notifications.
-- **Account** — documents downloaded (each with *Open* and *Show in folder*), learned cycle,
-  sign-in history.
+- **Issues** — *Needs you* (each issue with a short reason, the button that fixes its cause
+  — *Sign in*, *Check now*, *Open PDF* — and any automation log collapsed under *Technical
+  details*), *Worth knowing* (heads-ups), and *Activity*: every notification, including ones
+  held for quiet hours or the daily summary, with where it went or when it will be sent.
+- **Account** — status, when it was last checked, how it signs in; when its documents come
+  and how SD checks for them, in words; documents by year (the newest open, each with *Open*
+  and *Show in folder*); recent sign-ins.
 
 ## 10. Command line
 

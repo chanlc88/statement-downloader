@@ -113,6 +113,25 @@
   details.more .menu button:hover, details.more .menu a:hover { background: var(--chip); }
   details.more .menu .sub { display: block; }
   .attention { margin-bottom: 8px; }
+  /* Issues and activity */
+  .issue .what { margin-top: 2px; }
+  .issue .when { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+  details.tech { margin-top: 6px; font-size: 12.5px; }
+  details.tech summary { cursor: pointer; color: var(--muted); }
+  details.tech pre { white-space: pre-wrap; word-break: break-word; max-height: 260px; overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 8px; margin: 6px 0 0; font-size: 12px; }
+  .act { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 4px 10px; align-items: start; padding: 9px 14px; border-top: 1px solid var(--line); }
+  .act:first-child { border-top: 0; }
+  .act .dot { margin: 6px 0 0; }
+  .act .meta { font-size: 12.5px; color: var(--muted); text-align: right; white-space: nowrap; }
+  @media (max-width: 720px) { .act { grid-template-columns: auto minmax(0, 1fr); } .act .meta { grid-column: 2; text-align: left; white-space: normal; } }
+  /* Account page */
+  .acct-head h2 { font-size: 19px; margin: 0 0 4px; }
+  .acct-head .state { font-weight: 600; }
+  .acct-head .state.warn { color: var(--warn); } .acct-head .state.bad { color: var(--bad); } .acct-head .state.busy { color: var(--accent); }
+  .acct-head p { margin: 8px 0 0; }
+  details.year { margin-bottom: 10px; }
+  details.year > summary { cursor: pointer; font-weight: 600; padding: 4px 0 8px; }
+  details.year > summary .muted { font-weight: 400; }
   .attention .lhead { color: var(--bad); }
   @media (max-width: 720px) {
     .arow { grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; }
@@ -142,8 +161,6 @@ const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": 
 const money = v => v == null ? "–" : Number(v).toLocaleString("en-US", { style: "currency", currency: "USD" });
 const when = v => v ? new Date(v).toLocaleString() : "–";
 const day = v => v ? new Date(v + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "–";
-const statusText = { unknown: "Not signed in yet", healthy: "Signed in", "expiring-soon": "Expiring soon", "needs-assist": "Needs you", assisting: "Signing in…", broken: "Can't sign in" };
-const phaseText = { learning: "Learning cycle", quiet: "Quiet", preflight: "Pre-flight", "in-window": "In window", overdue: "Overdue", stale: "No new document", interval: "Interval" };
 
 async function api(path, opts = {}) {
   const r = await fetch("/api" + path, { ...opts, headers: { "X-SD-Key": KEY, ...(opts.headers || {}) } });
@@ -182,56 +199,46 @@ function byGroup(items) {
   return [...m.entries()].sort(([a], [b]) => (a === NO_GROUP) - (b === NO_GROUP) || a.localeCompare(b));
 }
 
-function issueHtml(i) {
-  return `<div class="issue ${esc(i.level)}"><b>${esc(i.title)}</b>${esc(i.message)}
-    ${i.key ? `<div class="actions"><button onclick="dismiss('${esc(i.key)}',this)">Dismiss</button>${i.key.startsWith("auth:") ? `<span class="muted">It comes back the next time a sign-in is needed.</span>` : ""}</div>` : ""}</div>`;
+/**
+ * A message split into what to read and the technical part (automation logs, stack traces), which
+ * is shown collapsed. [short, technical].
+ */
+function splitDetail(msg) {
+  msg = String(msg ?? "");
+  const m = msg.match(/^([\s\S]*?)(\s+Call log:|\s+at [\w.]+\(|\n)/);
+  if (m && m[1].trim()) return [m[1].trim(), msg.slice(m[1].length).trim()];
+  if (msg.length > 300) {
+    const cut = msg.indexOf(". ", 80);
+    return cut > 0 && cut < 300 ? [msg.slice(0, cut + 1), msg.slice(cut + 2)] : [msg.slice(0, 200) + "…", msg];
+  }
+  return [msg, ""];
+}
+const techHtml = t => t ? `<details class="tech"><summary>Technical details</summary><pre>${esc(t)}</pre></details>` : "";
+const levelTone = { "action-needed": "bad", "heads-up": "warn", info: "ok" };
+
+/** The button that fixes the cause of an issue, from its key (auth:<account>, clash:<document>, …). */
+function issueFixes(i, onAccountPage) {
+  const kind = i.key.split(":")[0], doc = i.key.split(":")[1], acct = i.accountId;
+  let b = "";
+  if (acct && (kind === "auth" || kind === "expiring")) b += `<button class="primary" onclick="run('${esc(acct)}','assist',this)">Sign in</button>`;
+  else if (acct && ["documents", "run", "overdue", "stale"].includes(kind)) b += `<button class="primary" onclick="run('${esc(acct)}','check',this)">Check now</button>`;
+  if (kind === "clash" || kind === "action") b += `<button onclick="openDoc('${esc(doc)}')">Open PDF</button><button onclick="showDoc('${esc(doc)}',this)">Show in folder</button>`;
+  if (acct && !onAccountPage) b += `<a class="button" href="/accounts/${esc(acct)}" data-nav>Account</a>`;
+  return b + `<button onclick="dismiss('${esc(i.key)}',this)">Dismiss</button>`;
 }
 
-function accountButtons(a) {
-  const busy = a.running ? "disabled" : "";
-  const assistFirst = ["needs-assist", "unknown", "expiring-soon"].includes(a.auth.status);
-  return `<div class="actions">
-    <button class="${assistFirst ? "primary" : ""}" ${busy} onclick="run('${a.id}','assist',this)">Sign in now</button>
-    <button class="${assistFirst ? "" : "primary"}" ${busy} onclick="run('${a.id}','check',this)">Check now</button>
-    ${a.running ? `<span class="muted">${a.running === "assist" ? "Waiting for you in the browser window…" : "Checking…"}</span>` : ""}
-  </div>`;
-}
-
-function windowText(a) {
-  const e = a.estimate;
-  if (!e) return a.schedule === "auto (learned)" ? `Learning (${a.documentCount}/3 documents)` : a.schedule;
-  return `${day(e.windowStart)} – ${day(e.windowEnd)} <span class="muted">(~every ${e.intervalDays}d ±${e.spreadDays})</span>`;
-}
-
-/** "Same sign-in as …" for accounts that share a login: one sign-in covers them all. */
-const sharedHtml = a => (a.sharesSignInWith || []).length
-  ? `<div class="row"><span>Shared login</span><span class="muted" title="One sign-in covers these accounts; Sign in now fetches them all">Same sign-in as ${esc(a.sharesSignInWith.join(", "))}</span></div>`
-  : "";
-
-/** Banner: whether the account signs in on its own, once you've signed in, or with you every time. */
-const signInModeHtml = (a, full) => a.signIn
-  ? `<div class="signin-mode ${a.signIn.mode}" title="${esc(a.signIn.detail)}">${esc(a.signIn.title)}${full ? `<span>${esc(a.signIn.detail)}</span>` : ""}</div>`
-  : "";
-
-function card(a) {
-  return `<div class="card">
-    ${signInModeHtml(a, true)}
-    <h2><a href="/accounts/${a.id}" data-nav>${esc(a.name)}</a></h2>
-    <div class="muted" style="margin-bottom:8px">${esc(a.site)} · ${esc(a.kind)}s${tagsHtml(a.tags)}</div>
-    <div class="row"><span>Sign-in</span><span class="pill s-${a.auth.status}">${statusText[a.auth.status] || a.auth.status}</span></div>
-    ${sharedHtml(a)}
-    <div class="row"><span>Last ${esc(a.kind)}</span><span>${a.lastDocument ? `${day(a.lastDocument.date)} · ${money(a.lastDocument.amount)}` : "none yet"}</span></div>
-    <div class="row"><span>Next expected</span><span>${windowText(a)}</span></div>
-    <div class="row"><span>Now</span><span>${phaseText[a.decision.phase] || a.decision.phase} <span class="muted">— ${esc(a.decision.reason)}</span></span></div>
-    ${a.lastRun ? `<div class="row"><span>Last run</span><span>${esc(a.lastRun)}</span></div>` : ""}
-    ${a.issues.map(issueHtml).join("")}
-    ${accountButtons(a)}
-  </div>`;
+function issueHtml(i, onAccountPage) {
+  const [short, tech] = splitDetail(i.message);
+  return `<div class="issue ${esc(i.level)}"><b>${esc(i.title)}</b><div class="what">${esc(short)}</div>${techHtml(tech)}
+    ${i.openedUtc ? `<div class="when">Since ${when(i.openedUtc)}</div>` : ""}
+    ${i.key ? `<div class="actions">${issueFixes(i, onAccountPage)}${i.key.startsWith("auth:") ? `<span class="muted">Dismissed, it comes back the next time a sign-in is needed.</span>` : ""}</div>` : ""}</div>`;
 }
 
 // ---- Accounts overview
 
 const shortDay = v => new Date(v + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" });
+/** The local day of a timestamp (not its UTC day). */
+const localDay = (v, year) => new Date(v).toLocaleDateString(undefined, { month: "short", day: "numeric", ...(year ? { year: "numeric" } : {}) });
 function ago(v) {
   const m = (Date.now() - new Date(v)) / 60000;
   if (m < 1) return "just now";
@@ -356,36 +363,85 @@ function toggleGroup(g) {
   store.set("collapsed", collapsed); render();
 }
 
+const reasonText = {
+  "verification-code": "the site asked for a code", captcha: "a human check didn't pass", "session-expired": "the sign-in had expired",
+  "password-rejected": "the site rejected the password", "site-changed": "the site's pages looked different", "site-unavailable": "couldn't reach the site",
+  "assist-abandoned": "the window closed before signing in", "credential-unavailable": "couldn't read the login", "attended-only": "skipped: it needed you there",
+};
+
+/** When documents come, and how SD checks for them, in words. */
+function scheduleText(a) {
+  const e = a.estimate, k = a.kind;
+  if (!e) return a.schedule === "auto (learned)"
+    ? `SD learns when ${esc(k)}s come once it has 3 of them (it has ${a.documentCount}). Until then it checks once a day.`
+    : `SD checks ${esc(a.schedule)}.`;
+  const delay = e.postingDelayDays <= 1 ? "the day after its date" : `about ${e.postingDelayDays} days after its date`;
+  return `A new ${esc(k)} usually comes every <b>${e.intervalDays} days</b> (give or take ${e.spreadDays}) and is online ${delay}.
+    The next is expected around <b>${day(e.nextExpected)}</b>. SD checks for it from ${shortDay(e.windowStart)} to ${shortDay(e.windowEnd)},
+    after signing in once beforehand to make sure the login still works; if it's late, SD checks daily and tells you.`;
+}
+
+function accountHead(a) {
+  const [tone, text] = statusLine(a);
+  const busy = a.running || a.auth.status === "assisting" ? "disabled" : "";
+  const signInFirst = ["needs-assist", "unknown", "expiring-soon", "broken"].includes(a.auth.status);
+  const shared = (a.sharesSignInWith || []).length ? ` One sign-in also covers ${esc(a.sharesSignInWith.join(", "))}.` : "";
+  const d = a.lastDocument;
+  return `<div class="card acct-head">
+    <h2>${esc(a.name)}${tagsHtml(a.tags)}</h2>
+    <div class="state ${tone}"><span class="dot ${tone}"></span>${esc(text)}</div>
+    <div class="sub">${a.lastCheckedUtc ? `Checked ${ago(a.lastCheckedUtc)}` : "Not checked yet"}${a.lastRun ? ` · ${esc(a.lastRun)}` : ""}</div>
+    ${a.signIn ? `<p class="sub"><b>${esc(a.signIn.title)}.</b> ${esc(a.signIn.detail)}${shared}</p>` : ""}
+    ${a.issues.map(i => issueHtml(i, true)).join("")}
+    <div class="actions">
+      <button class="${signInFirst ? "primary" : ""}" ${busy} onclick="run('${a.id}','assist',this)" title="Opens a browser window, signs in, then checks for new ${esc(a.kind)}s">Sign in now</button>
+      <button class="${signInFirst ? "" : "primary"}" ${busy} onclick="run('${a.id}','check',this)">Check now</button>
+      ${d ? `<button onclick="openDoc('${d.id}')">Open latest ${esc(a.kind)}</button><button onclick="showDoc('${d.id}',this)">Show in folder</button>` : ""}
+    </div>
+  </div>`;
+}
+
+/** Documents by year (the newest year open), with only the columns that have something in them. */
+function documentsHtml(a, documents) {
+  if (!documents.length) return `<div class="empty">No ${esc(a.kind)}s on record. <button onclick="importHistory('${a.id}',this)">Import from folder</button></div>`;
+  const hasNumber = documents.some(x => x.statementNumber), hasActions = documents.some(x => (x.actions || []).length);
+  const imported = documents.filter(x => x.imported).length;
+  const note = `<p class="sub" style="margin:-4px 0 10px">${documents.length - imported} downloaded by SD${imported ? ` · ${imported} imported from your folder` : ""}</p>`;
+  const years = new Map();
+  for (const x of documents) { const y = String(x.date).slice(0, 4); if (!years.has(y)) years.set(y, []); years.get(y).push(x); }
+  const table = list => `<table><tr><th>Date</th><th>Amount</th>${hasNumber ? "<th>Number</th>" : ""}${hasActions ? "<th>Actions</th>" : ""}<th>File</th></tr>
+    ${list.map(x => `<tr><td>${day(x.date)}${x.review === "pending" ? ' <span class="pill">review</span>' : ""}${!x.imported && x.firstSeenUtc ? `<div class="sub">downloaded ${localDay(x.firstSeenUtc)}</div>` : ""}</td>
+      <td>${money(x.amount)}</td>${hasNumber ? `<td>${esc(x.statementNumber || "–")}</td>` : ""}
+      ${hasActions ? `<td>${(x.actions || []).map(r => `<div class="${r.succeeded ? "s-healthy" : "s-broken"}">${esc(r.summary || r.type)}</div>`).join("") || '<span class="muted">–</span>'}</td>` : ""}
+      <td><code>${esc(x.path.split(/[\\/]/).pop())}</code><br><button class="linkbtn" onclick="openDoc('${x.id}')">Open</button> · <button class="linkbtn" onclick="showDoc('${x.id}',this)">Show in folder</button></td></tr>`).join("")}</table>`;
+  return note + [...years.entries()].map(([y, list], i) =>
+    `<details class="year" ${i === 0 ? "open" : ""}><summary>${y} <span class="muted">· ${list.length} ${esc(a.kind)}${list.length === 1 ? "" : "s"}</span></summary>${table(list)}</details>`).join("");
+}
+
+function signInsHtml(signIns) {
+  if (!signIns.length) return `<div class="empty">No sign-ins yet.</div>`;
+  const machines = new Set(signIns.map(e => e.machine)).size > 1;
+  const row = e => `<tr><td>${when(e.atUtc)}</td>
+    <td class="${e.succeeded ? "s-healthy" : "s-broken"}">${e.succeeded ? "Signed in" : esc(reasonText[e.reason] || e.reason)}${e.detail ? ` <span class="muted">${esc(splitDetail(e.detail)[0])}</span>` : ""}</td>
+    <td>${e.assisted ? "with you" : "on its own"}</td><td>${e.rememberedUntilUtc ? localDay(e.rememberedUntilUtc, true) : "–"}</td>${machines ? `<td>${esc(e.machine)}</td>` : ""}</tr>`;
+  const head = `<tr><th>When</th><th>Result</th><th>How</th><th>Remembered until</th>${machines ? "<th>Computer</th>" : ""}</tr>`;
+  const recent = signIns.slice(0, 6), older = signIns.slice(6);
+  return `<table>${head}${recent.map(row).join("")}</table>
+    ${older.length ? `<details class="year" style="margin-top:10px"><summary><span class="muted">${older.length} earlier sign-in${older.length === 1 ? "" : "s"}</span></summary><table>${head}${older.map(row).join("")}</table></details>` : ""}`;
+}
+
 async function renderAccount(id, assist) {
   const d = await api("/accounts/" + encodeURIComponent(id));
   const a = d.account;
   const callout = assist && a.auth.status !== "healthy" ? `<div class="callout"><b>Sign in to ${esc(a.name)}</b>
     <p>Choosing <b>Sign in now</b> opens a browser window on this computer with your username and password filled in.
     Finish whatever the site asks (verification code, CAPTCHA) and tick “remember me” if it's offered. Any waiting ${esc(a.kind)}s are downloaded right after.</p></div>` : "";
-  // Columns that are empty for every document are left out.
-  const hasNumber = d.documents.some(x => x.statementNumber), hasActions = d.documents.some(x => (x.actions || []).length);
-  const docs = d.documents.length ? `<table><tr><th>Date</th><th>Amount</th>${hasNumber ? "<th>Statement #</th>" : ""}${hasActions ? "<th>Actions</th>" : ""}<th>File</th></tr>
-    ${d.documents.map(x => `<tr><td>${day(x.date)}${x.imported ? ' <span class="muted">(imported)</span>' : ""}${x.review === "pending" ? ' <span class="pill">review</span>' : ""}</td>
-      <td>${money(x.amount)}</td>${hasNumber ? `<td>${esc(x.statementNumber || "–")}</td>` : ""}
-      ${hasActions ? `<td>${(x.actions || []).map(r => `<div class="${r.succeeded ? "s-healthy" : "s-broken"}">${esc(r.type)}: ${esc(r.summary)}</div>`).join("") || '<span class="muted">–</span>'}</td>` : ""}
-      <td><code>${esc(x.path.split(/[\\/]/).pop())}</code><br><button class="linkbtn" onclick="openDoc('${x.id}')">Open</button> · <button class="linkbtn" onclick="showDoc('${x.id}',this)">Show in folder</button></td></tr>`).join("")}</table>`
-    : `<div class="empty">No ${esc(a.kind)}s on record. <button onclick="importHistory('${a.id}',this)">Import from folder</button></div>`;
-  const signIns = d.signIns.length ? `<table><tr><th>When</th><th>Result</th><th>Helped</th><th>Remembered until</th><th>Machine</th></tr>
-    ${d.signIns.map(e => `<tr><td>${when(e.atUtc)}</td><td class="${e.succeeded ? "s-healthy" : "s-broken"}">${e.succeeded ? "Signed in" : esc(e.reason)}${e.detail ? ` <span class="muted">${esc(e.detail)}</span>` : ""}</td>
-      <td>${e.assisted ? "yes" : ""}</td><td>${when(e.rememberedUntilUtc)}</td><td>${esc(e.machine)}</td></tr>`).join("")}</table>`
-    : `<div class="empty">No sign-ins yet.</div>`;
-  const e = a.estimate;
-  return `${callout}${card(a)}
-    <h3>Cycle</h3>
-    <div class="card">${e ? `
-      <div class="row"><span>Typical interval</span><span>${e.intervalDays} days ± ${e.spreadDays}</span></div>
-      <div class="row"><span>Posting delay</span><span>${e.postingDelayDays} day(s) after the document date</span></div>
-      <div class="row"><span>Next expected</span><span>${day(e.nextExpected)}</span></div>
-      <div class="row"><span>Window</span><span>${day(e.windowStart)} – ${day(e.windowEnd)}</span></div>`
-      : `<span class="muted">Needs 3 documents to learn the cycle. Schedule: ${esc(a.schedule)}.</span>`}
-      <div class="row"><span>Folder</span><span><code>${esc(a.folder)}</code></span></div></div>
-    <h3>${esc(a.kind[0].toUpperCase() + a.kind.slice(1))}s</h3>${docs}
-    <h3>Sign-in history</h3>${signIns}`;
+  return `${callout}${accountHead(a)}
+    <h3>When ${esc(a.kind)}s come</h3>
+    <div class="card"><p style="margin:0">${scheduleText(a)}</p>
+      <p class="sub" style="margin:8px 0 0">Saved to <code>${esc(a.folder)}</code></p></div>
+    <h3>${esc(a.kind[0].toUpperCase() + a.kind.slice(1))}s</h3>${documentsHtml(a, d.documents)}
+    <h3>Sign-ins</h3>${signInsHtml(d.signIns)}`;
 }
 
 async function renderReview() {
@@ -399,15 +455,26 @@ async function renderReview() {
 
 async function renderIssues() {
   const d = await api("/issues");
-  const open = d.open.length ? d.open.map(issueHtml).join("") : `<div class="empty">Nothing needs you right now.</div>`;
-  const recent = d.recent.length ? `<table><tr><th>When</th><th>Level</th><th>Notification</th><th>Sent to</th></tr>
-    ${d.recent.map(n => `<tr><td>${when(n.atUtc)}</td><td>${esc(n.notification.level)}</td><td><b>${esc(n.notification.title)}</b><br><span class="muted">${esc(n.notification.message)}</span></td>
-      <td>${esc((n.channels || []).join(", ") || "log only")}${n.error ? `<div class="s-broken">${esc(n.error)}</div>` : ""}</td></tr>`).join("")}</table>`
-    : `<div class="empty">No notifications yet.</div>`;
-  const held = d.held.length ? `<p class="muted">${d.held.length} notification(s) held for quiet hours or the daily summary.</p>` : "";
-  const dismissAll = d.open.length > 1 ? `<div class="actions" style="margin:0 0 12px"><button onclick="dismissAll(this)">Dismiss all</button></div>` : "";
-  return `<h3 style="margin-top:0">Open</h3>${dismissAll}${open}<h3>Recent notifications</h3>
-    <div class="actions" style="margin:0 0 12px"><button onclick="testNotify(this)">Send test notification</button>${d.recent.length ? `<button onclick="clearHistory(this)">Clear history</button>` : ""}</div>${held}${recent}`;
+  const needs = d.open.filter(i => i.level === "action-needed"), fyi = d.open.filter(i => i.level !== "action-needed");
+  const timeOf = v => new Date(v).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" });
+  const entries = [
+    ...d.held.map(h => ({ at: h.queuedUtc, n: h.notification,
+      where: h.digest ? `in the daily summary, ${timeOf(h.releaseAfterUtc)}` : `held for quiet hours until ${timeOf(h.releaseAfterUtc)}` })),
+    ...d.recent.map(r => ({ at: r.atUtc, n: r.notification, error: r.error,
+      where: (r.channels || []).length ? `sent to ${r.channels.join(", ")}` : "not sent (app only)" })),
+  ].sort((x, y) => (y.at ? new Date(y.at) : Infinity) - (x.at ? new Date(x.at) : Infinity));
+  const activity = entries.length ? `<div class="list">${entries.map(x => {
+      const [short, tech] = splitDetail(x.n.message);
+      return `<div class="act"><span class="dot ${levelTone[x.n.level] || "ok"}"></span>
+        <div><b>${esc(x.n.title)}</b><div class="sub">${esc(short)}</div>${techHtml(tech)}${x.error ? `<div class="s-broken sub">Couldn't send: ${esc(x.error)}</div>` : ""}</div>
+        <div class="meta">${x.at ? when(x.at) : "not sent yet"}<br>${esc(x.where)}</div></div>`;
+    }).join("")}</div>` : `<div class="empty">Nothing has happened yet.</div>`;
+  return `<h3 style="margin-top:0">Needs you</h3>
+    ${needs.length > 1 ? `<div class="actions" style="margin:0 0 4px"><button onclick="dismissAll(this)">Dismiss all</button></div>` : ""}
+    ${needs.length ? needs.map(i => issueHtml(i)).join("") : `<div class="empty">Nothing needs you right now.</div>`}
+    ${fyi.length ? `<h3>Worth knowing</h3>${fyi.map(i => issueHtml(i)).join("")}` : ""}
+    <h3>Activity</h3>${activity}
+    <div class="actions"><button onclick="testNotify(this)">Send test notification</button>${d.recent.length ? `<button onclick="clearHistory(this)">Clear sent history</button>` : ""}</div>`;
 }
 
 const TOKENS_HELP = `Tokens: <code>{year}</code> <code>{month}</code> <code>{date:yyyy-MM-dd}</code> <code>{statement}</code> (statement or invoice number) <code>{account}</code> <code>{kind}</code>. Use <code>/</code> between folder levels.`;
