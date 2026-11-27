@@ -31,6 +31,8 @@ public sealed record SiteContext
     public bool SignInOnly { get; init; }
     /// <summary>Assisted sign-in: show the browser and wait for the person.</summary>
     public bool Interactive { get; init; }
+    /// <summary>Other accounts share this sign-in (and run right after this one in the same browser).</summary>
+    public bool SharedLogin { get; init; }
     /// <summary>Save a snapshot of each page visited after sign-in (for mapping a new site).</summary>
     public bool Capture { get; init; }
     public TimeSpan AssistTimeout { get; init; } = TimeSpan.FromMinutes(10);

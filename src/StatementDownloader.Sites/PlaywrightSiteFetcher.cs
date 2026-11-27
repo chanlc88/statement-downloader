@@ -55,7 +55,7 @@ public abstract class PlaywrightSiteFetcher : ISiteFetcher
         try
         {
             session = YourBrowser
-                ? await BrowserSession.YoursAsync(playwright, ctx.ProfileDir, StartUrl, ct)
+                ? await BrowserSession.YoursAsync(playwright, ctx.ProfileDir, StartUrl, keepOpen: ctx.SharedLogin, ct)
                 : await BrowserSession.AutomatedAsync(playwright, ctx.ProfileDir, headless: !ctx.Interactive);
         }
         catch (Exception ex) when (ex is PlaywrightException or TimeoutException or InvalidOperationException)

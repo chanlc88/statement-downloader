@@ -86,6 +86,7 @@ public sealed class AccountRunner(
                     Known = known,
                     SignInOnly = mode == RunMode.SignInOnly,
                     Interactive = interactive,
+                    SharedLogin = Logins.Siblings(config, account).Count > 0,
                     Capture = capture,
                     Log = loggers.CreateLogger($"Site.{account.Site}"),
                 }, ct);

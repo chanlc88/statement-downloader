@@ -30,7 +30,7 @@ public sealed class BrowserSession : IAsyncDisposable
     /// person to sign in to, and connects to it over the browser's local debugging port. Nothing is
     /// done to hide the connection; the window is simply a normal browser the person uses.
     /// </summary>
-    public static async Task<BrowserSession> YoursAsync(IPlaywright playwright, string profileDir, string url, CancellationToken ct)
+    public static async Task<BrowserSession> YoursAsync(IPlaywright playwright, string profileDir, string url, bool keepOpen, CancellationToken ct)
     {
         // One debugging port per profile. If that browser is still open (another account on the same
         // login just used it, or a run was interrupted), reuse it rather than start a second copy,
@@ -74,8 +74,9 @@ public sealed class BrowserSession : IAsyncDisposable
             Page = page,
             _close = async () =>
             {
-                // Disconnect, and keep the window briefly for the other accounts on this login.
+                // Disconnect, and close the window — or keep it briefly for the other accounts on this login.
                 try { await browser.CloseAsync(); } catch (PlaywrightException) { }
+                if (!keepOpen) { await CloseBrowserAsync(port); return; }
                 var timer = new CancellationTokenSource();
                 OpenWindows[profileDir] = timer;
                 _ = Task.Delay(KeepOpen, timer.Token).ContinueWith(async t =>
@@ -126,6 +127,8 @@ public sealed class BrowserSession : IAsyncDisposable
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             await socket.ConnectAsync(new Uri(ws), timeout.Token);
             await socket.SendAsync("""{"id":1,"method":"Browser.close"}"""u8.ToArray(), System.Net.WebSockets.WebSocketMessageType.Text, true, timeout.Token);
+            // Wait for the browser to take the command: dropping the connection straight away can lose it.
+            await socket.ReceiveAsync(new byte[4096], timeout.Token);
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or OperationCanceledException
                                    or System.Net.WebSockets.WebSocketException or System.Text.Json.JsonException or KeyNotFoundException) { /* already closed */ }
