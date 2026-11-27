@@ -9,8 +9,9 @@ verified: 2026-11-20
 notes: >
   The sign-in form is inside an iframe (#logonbox). Chase sends unattended (headless)
   browsers to a "System Requirements" page, and new devices get a one-time code, so this
-  recipe is attended: SD asks you to choose Sign in now, fills the login, and you enter any
-  code. One login shows every account: set siteOptions.account to the label in the
+  recipe uses a visible window. Once Chase remembers this PC, scheduled checks open it by
+  themselves and sign in; if Chase asks for a code, SD stops and asks you to choose Sign in now
+  (it fills the login; you enter the code). One login shows every account: set siteOptions.account to the label in the
   Statements and Documents list, e.g. "BUSINESS CARD (...1234)" or "MY BUSINESS (...5678)"
   — one SD account per Chase account. The list shows the current year. Card statements have
   a direct save link; bank statements have a save menu (expand) with "Download PDF".
@@ -25,6 +26,7 @@ signIn:
   submit: '#logonbox >> internal:control=enter-frame >> #signin-button'
   signedIn: ':text-is("Sign out")'
   attended: true
+  unattended: true
 
 documents:
   steps:

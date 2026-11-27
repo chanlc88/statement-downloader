@@ -42,12 +42,14 @@ public abstract class PlaywrightSiteFetcher : ISiteFetcher
     /// </summary>
     protected virtual bool YourBrowser => false;
     /// <summary>
-    /// With <see cref="YourBrowser"/>: scheduled checks open that window by themselves and sign in
-    /// once. If the human check doesn't pass, or the sign-in fails, they stop and ask the person.
+    /// With <see cref="AttendedOnly"/> or <see cref="YourBrowser"/>: scheduled checks open the visible
+    /// window by themselves and sign in once. If a human check doesn't pass, a code is asked for, or
+    /// the sign-in fails, they stop and ask the person.
     /// </summary>
-    protected virtual bool YourBrowserUnattended => false;
-    public bool NeedsPerson => AttendedOnly || (YourBrowser && !YourBrowserUnattended);
-    public bool OpensWindow => YourBrowser && YourBrowserUnattended && !AttendedOnly;
+    protected virtual bool Unattended => false;
+    private bool VisibleOnly => AttendedOnly || YourBrowser;
+    public bool NeedsPerson => VisibleOnly && !Unattended;
+    public bool OpensWindow => VisibleOnly && Unattended;
     public virtual bool EmailsCode => false;
 
     public async Task<SiteResult> RunAsync(SiteContext ctx, CancellationToken ct = default)
@@ -63,7 +65,7 @@ public abstract class PlaywrightSiteFetcher : ISiteFetcher
         {
             session = YourBrowser
                 ? await BrowserSession.YoursAsync(playwright, ctx.ProfileDir, StartUrl, keepOpen: ctx.SharedLogin, ct)
-                : await BrowserSession.AutomatedAsync(playwright, ctx.ProfileDir, headless: !ctx.Interactive);
+                : await BrowserSession.AutomatedAsync(playwright, ctx.ProfileDir, headless: !ctx.Interactive && !VisibleOnly);
         }
         catch (Exception ex) when (ex is PlaywrightException or TimeoutException or InvalidOperationException)
         {

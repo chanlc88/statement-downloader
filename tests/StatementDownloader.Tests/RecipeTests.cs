@@ -27,6 +27,7 @@ public class RecipeTests
     [Theory]
     [InlineData("republic-services")]
     [InlineData("georgia-power")]
+    [InlineData("chase")]
     public void Signs_in_by_itself_in_a_browser_window(string id)
     {
         var site = new StatementDownloader.Sites.Recipes.RecipeSiteFetcher(Recipe(id));
@@ -167,7 +168,7 @@ public class RecipeTests
             parse: { date: "Date \\S+" }
             """;
         var ex = Assert.Throws<InvalidDataException>(() => RecipeLoader.Parse(yaml, "bad.yaml"));
-        foreach (var expected in new[] { "unattended needs signIn.yourBrowser", "id is required", "name is required", "https://", "exactly one of click", "counts from 1", "link.pattern", "fetch, click or popup", "parse.date" })
+        foreach (var expected in new[] { "unattended needs signIn.attended or signIn.yourBrowser", "id is required", "name is required", "https://", "exactly one of click", "counts from 1", "link.pattern", "fetch, click or popup", "parse.date" })
             Assert.Contains(expected, ex.Message);
     }
 
