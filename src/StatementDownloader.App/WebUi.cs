@@ -294,6 +294,24 @@ public static class WebUi
                     if (fileName != account.FileName) yaml = ConfigEditor.SetAccountValue(yaml, account.Id, "fileName", fileName);
                     if (a.Group is { } group && group.Trim() != (account.Group ?? "")) yaml = ConfigEditor.SetAccountGroup(yaml, account.Id, group);
                     if (a.Tags is { } tags && !ConfigEditor.NormalizeTags(tags).SequenceEqual(account.Tags)) yaml = ConfigEditor.SetAccountTags(yaml, account.Id, tags);
+                    if (a.Notify is { } notify && notify != account.Notify) yaml = ConfigEditor.SetAccountNotify(yaml, account.Id, notify);
+                }
+                if (change.Notifications is { } nc)
+                {
+                    if (nc.Enabled is { } on && on != s.Config.Notifications.Enabled) yaml = ConfigEditor.SetNotificationsEnabled(yaml, on);
+                    if (nc.Groups is { } groups)
+                    {
+                        var list = new List<(string, IReadOnlyList<string>, bool)>();
+                        foreach (var g in groups.Where(g => !string.IsNullOrWhiteSpace(g.Name)))
+                        {
+                            var email = (g.Email ?? []).SelectMany(e => e.Split([',', ';', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                                .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                            if (email.Select(ConfigLoader.EmailProblem).OfType<string>().FirstOrDefault() is { } bad) return Results.BadRequest(new { error = $"{g.Name.Trim()}: {bad}" });
+                            // A group with no addresses and notifications on needs no entry: it uses the channel's own 'to'.
+                            if (email.Count > 0 || g.Enabled == false) list.Add((g.Name.Trim(), email, g.Enabled != false));
+                        }
+                        yaml = ConfigEditor.SetNotificationGroups(yaml, list);
+                    }
                 }
 
                 AppConfig saved;
@@ -304,7 +322,9 @@ public static class WebUi
                 // Apply to the running agent.
                 s.Config.DocumentsRoot = saved.DocumentsRoot;
                 foreach (var a in s.Config.Accounts)
-                    if (saved.Accounts.FirstOrDefault(x => x.Id == a.Id) is { } n) { a.Folder = n.Folder; a.FileName = n.FileName; a.Group = n.Group; a.Tags = n.Tags; }
+                    if (saved.Accounts.FirstOrDefault(x => x.Id == a.Id) is { } n) { a.Folder = n.Folder; a.FileName = n.FileName; a.Group = n.Group; a.Tags = n.Tags; a.Notify = n.Notify; }
+                s.Config.Notifications.Enabled = saved.Notifications.Enabled;
+                s.Config.Notifications.Groups = saved.Notifications.Groups;
                 return Results.Ok(await SettingsView(s, ct));
             }
             catch (InvalidDataException ex) { return Results.BadRequest(new { error = ex.Message }); }
@@ -316,9 +336,11 @@ public static class WebUi
 
     private static readonly SemaphoreSlim SettingsLock = new(1, 1);
 
-    public sealed record SettingsChange(string? DocumentsRoot, List<AccountLocationChange>? Accounts);
+    public sealed record SettingsChange(string? DocumentsRoot, List<AccountLocationChange>? Accounts, NotificationsChange? Notifications = null);
+    public sealed record NotificationsChange(bool? Enabled, List<GroupNotificationsChange>? Groups);
+    public sealed record GroupNotificationsChange(string Name, List<string>? Email, bool? Enabled);
     public sealed record NewAccount(string? Name, string? Site, string? Group, List<string>? Tags, Dictionary<string, string>? Options, string? Credential, string? Folder, string? FileName);
-    public sealed record AccountLocationChange(string Id, string? Folder, string? FileName, string? Group = null, List<string>? Tags = null);
+    public sealed record AccountLocationChange(string Id, string? Folder, string? FileName, string? Group = null, List<string>? Tags = null, bool? Notify = null);
 
     private static async Task<object> SettingsView(AppServices s, CancellationToken ct)
     {
@@ -326,7 +348,7 @@ public static class WebUi
         foreach (var a in s.Config.Accounts)
         {
             var example = await ExamplePathAsync(s, a, s.Config.DocumentsRoot, a.Folder, a.FileName, ct);
-            accounts.Add(new { a.Id, name = a.DisplayName, a.Site, group = a.Group, tags = a.Tags, sharesSignInWith = Logins.Siblings(s.Config, a).Select(x => x.DisplayName), a.Folder, a.FileName, example, relative = Relative(s.Config.DocumentsRoot, example) });
+            accounts.Add(new { a.Id, name = a.DisplayName, a.Site, group = a.Group, tags = a.Tags, notify = a.Notify, sharesSignInWith = Logins.Siblings(s.Config, a).Select(x => x.DisplayName), a.Folder, a.FileName, example, relative = Relative(s.Config.DocumentsRoot, example) });
         }
         return new
         {
@@ -336,6 +358,34 @@ public static class WebUi
             groups = s.Config.Accounts.Select(a => a.Group).OfType<string>().Where(g => g.Length > 0).Distinct().Order(StringComparer.OrdinalIgnoreCase),
             tags = s.Config.Accounts.SelectMany(a => a.Tags).Distinct().Order(StringComparer.OrdinalIgnoreCase),
             accounts,
+            notifications = NotificationsView(s),
+        };
+    }
+
+    /// <summary>Who gets which notifications: the on/off switch, each group's addresses, and the email channels.</summary>
+    private static object NotificationsView(AppServices s)
+    {
+        var n = s.Config.Notifications;
+        var emailChannels = n.Channels.Where(c => c.GetValueOrDefault("type") == "email").ToList();
+        var emailNames = emailChannels.Select(c => c.GetValueOrDefault("name") ?? "email").ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var levels = new[] { ("actionNeeded", "action needed"), ("headsUp", "heads-ups"), ("info", "info (new documents, approvals waiting)") };
+        var groupNames = s.Config.Accounts.Select(a => a.Group).OfType<string>().Concat(n.Groups.Keys)
+            .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase);
+        return new
+        {
+            enabled = n.Enabled,
+            emailChannels = emailNames,
+            // Which levels go by email at all (routes), so the page can say what recipients will get.
+            emailedLevels = levels.Where(l => n.Routes.GetValueOrDefault(l.Item1)?.Any(emailNames.Contains) == true).Select(l => l.Item2),
+            defaultTo = emailChannels.Select(c => c.GetValueOrDefault("to")).OfType<string>().FirstOrDefault(),
+            groups = groupNames.Select(g => new
+            {
+                name = g,
+                email = n.Group(g)?.Email ?? [],
+                enabled = n.Group(g)?.Enabled ?? true,
+                accounts = s.Config.Accounts.Count(a => string.Equals(a.Group, g, StringComparison.OrdinalIgnoreCase)),
+            }),
+            ungrouped = s.Config.Accounts.Count(a => a.Group is null),
         };
     }
 

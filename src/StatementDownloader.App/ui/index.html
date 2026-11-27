@@ -88,6 +88,13 @@
   #newAcct .site-notes { font-size: 13px; color: var(--muted); margin-top: 6px; }
   #newAcct .full { grid-column: 1 / -1; }
   .rowbtns button { white-space: nowrap; }
+  label.check { display: flex; align-items: center; gap: 8px; font-weight: 600; margin: 12px 0 4px; cursor: pointer; }
+  label.check input { width: auto; margin: 0; }
+  .ngroups { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) auto; gap: 8px 14px; align-items: center; margin-top: 8px; }
+  .ngroups .h { font-size: 12.5px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+  .ngroups label.check { margin: 0; font-weight: 400; }
+  #notifyCard.off .ngroups { opacity: .55; }
+  @media (max-width: 700px) { .ngroups { grid-template-columns: 1fr; } .ngroups .h { display: none; } }
   @media (max-width: 700px) { .lrow.editing .fields { grid-template-columns: 1fr; } }
 
   /* Accounts overview: a summary, then one compact row per account. */
@@ -478,7 +485,9 @@ async function renderIssues() {
     ...d.held.map(h => ({ at: h.queuedUtc, n: h.notification,
       where: h.digest ? `in the daily summary, ${timeOf(h.releaseAfterUtc)}` : `held for quiet hours until ${timeOf(h.releaseAfterUtc)}` })),
     ...d.recent.map(r => ({ at: r.atUtc, n: r.notification, error: r.error,
-      where: (r.channels || []).length ? `sent to ${r.channels.join(", ")}` : "not sent (app only)" })),
+      where: r.skipped ? `not sent: ${r.skipped}`
+        : (r.channels || []).length ? `sent to ${r.channels.join(", ")}${(r.notification.emailTo || []).length ? ` (${r.notification.emailTo.join(", ")})` : ""}`
+        : "not sent (app only)" })),
   ].sort((x, y) => (y.at ? new Date(y.at) : Infinity) - (x.at ? new Date(x.at) : Infinity));
   const activity = entries.length ? `<div class="list">${entries.map(x => {
       const [short, tech] = splitDetail(x.n.message);
@@ -517,6 +526,7 @@ async function renderSettings() {
   editingId = null; editingRoot = false;
   const d = settingsData;
   return `<div class="card" id="rootCard">${rootHtml()}</div>
+    <div class="card" id="notifyCard" style="margin-top:16px">${notifyHtml()}</div>
     <div class="toolbar">
       <input type="search" id="acctFilter" placeholder="Filter by account, group, tag, site or folder" value="${esc(settingsFilter)}" aria-label="Filter accounts">
       <span class="muted" id="acctCount"></span>
@@ -542,6 +552,39 @@ function rootHtml() {
     <label for="root">Base folder on this computer</label>
     <input type="text" id="root" value="${esc(d.documentsRoot)}" data-original="${esc(d.documentsRoot)}" spellcheck="false">
     <div class="rowbtns"><button class="primary" onclick="saveRoot(this)">Save</button><button onclick="cancelEdit()">Cancel</button><span class="msg"></span></div>`;
+}
+
+/** Notifications: the global switch, and per group who gets emails and whether anything is sent. */
+function notifyHtml() {
+  const n = settingsData.notifications;
+  const emailNote = !n.emailChannels.length
+    ? `<div class="hint s-broken">No email channel is set up, so only the other channels (e.g. your phone) get notifications. Add a <code>type: email</code> channel to <code>notifications.channels</code> in config.yaml, then list <code>email</code> in <code>routes</code>.</div>`
+    : n.emailedLevels.length ? `<div class="hint">Emails are sent for: ${esc(n.emailedLevels.join(", "))} (from <code>notifications.routes</code>).</div>`
+    : `<div class="hint s-broken">The email channel isn't in <code>notifications.routes</code>, so no emails are sent. Add it to actionNeeded, headsUp and info.</div>`;
+  const fallback = n.defaultTo ? `go to ${esc(n.defaultTo)}` : "aren't emailed (the email channel has no <code>to</code>)";
+  const rows = n.groups.map(g => `
+      <div><b>${esc(g.name)}</b> <span class="muted" style="font-size:12.5px">${g.accounts} account${g.accounts === 1 ? "" : "s"}</span></div>
+      <input type="text" data-ngroup="${esc(g.name)}" value="${esc(g.email.join(", "))}" data-original="${esc(g.email.join(", "))}" placeholder="${n.defaultTo ? "uses " + esc(n.defaultTo) : "name@example.com"}" spellcheck="false" autocomplete="off" aria-label="Email addresses for ${esc(g.name)}">
+      <label class="check"><input type="checkbox" data-ngroup-on="${esc(g.name)}" ${g.enabled ? "checked" : ""} data-original="${g.enabled}"> Send</label>`).join("");
+  return `<b>Notifications</b> <span class="muted">— every notification (problems, sign-ins, new documents, approvals waiting, reminders) for an account goes to its group's addresses</span>
+    <label class="check"><input type="checkbox" id="n-enabled" ${n.enabled ? "checked" : ""} data-original="${n.enabled}" onchange="$('#notifyCard').classList.toggle('off', !this.checked)"> Send notifications</label>
+    <div class="hint">Off sends nothing on any channel. Issues still show under Issues.</div>
+    ${n.groups.length ? `<div class="ngroups"><div class="h">Group</div><div class="h">Email to <span style="text-transform:none;font-weight:400">— comma-separated</span></div><div class="h">On</div>${rows}</div>`
+      : `<div class="hint">Give accounts a group (Edit an account) to send each group's notifications to its own addresses.</div>`}
+    <div class="hint">Accounts with no group${n.ungrouped ? ` (${n.ungrouped})` : ""}, and groups with no addresses, ${fallback}. To stop one account's notifications, edit the account.</div>
+    ${emailNote}
+    <div class="rowbtns"><button class="primary" onclick="saveNotify(this)">Save</button><button onclick="testNotify(this)">Send test</button><span class="msg"></span></div>`;
+}
+
+async function saveNotify(btn) {
+  const groups = [...document.querySelectorAll("[data-ngroup]")].map(i => ({ name: i.dataset.ngroup,
+    email: i.value.split(/[,;\s]+/).map(x => x.trim()).filter(Boolean),
+    enabled: document.querySelector(`[data-ngroup-on="${CSS.escape(i.dataset.ngroup)}"]`).checked }));
+  const error = await working(btn, "Saving…", () => postSettings({ notifications: { enabled: $("#n-enabled").checked, groups } }));
+  if (error) return setMsg($("#notifyCard"), `<span class="s-broken">${esc(error)}</span>`);
+  $("#notifyCard").innerHTML = notifyHtml();
+  $("#notifyCard").classList.toggle("off", !settingsData.notifications.enabled);
+  setMsg($("#notifyCard"), `<span class="s-healthy">Saved.</span>`);
 }
 
 function listHtml() {
@@ -573,6 +616,8 @@ function editorHtml(a) {
       <div><label for="f-file">File name</label>
         <input type="text" id="f-file" data-field="fileName" value="${esc(a.fileName)}" data-original="${esc(a.fileName)}" spellcheck="false"></div>
       <div class="full" style="grid-column:1/-1">${tokenButtons()}</div>
+      <div class="full" style="grid-column:1/-1"><label class="check"><input type="checkbox" id="f-notify" ${a.notify ? "checked" : ""} data-original="${a.notify}"> Send notifications for this account</label>
+        <div class="hint">They go to its group's addresses (set under Notifications above). Off: nothing is sent for it; problems still show under Issues.</div></div>
     </div>
     <div class="preview" data-preview title="${esc(a.example)}">${esc(a.relative)}</div>
     <div class="rowbtns"><button class="primary" onclick="saveAccount(this)">Save</button><button onclick="cancelEdit()">Cancel</button>
@@ -658,8 +703,9 @@ function addTag(t) {
   input.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
+const changed = i => i.type === "checkbox" ? String(i.checked) !== i.dataset.original : i.value !== i.dataset.original;
 function settingsDirty() {
-  return [...document.querySelectorAll("main input[data-original]")].some(i => i.value !== i.dataset.original);
+  return [...document.querySelectorAll("main input[data-original]")].some(changed);
 }
 
 function confirmDiscard() { return !settingsDirty() || confirm("Discard your unsaved changes?"); }
@@ -710,11 +756,13 @@ async function saveAccount(btn) {
   const row = document.querySelector(".lrow.editing");
   const id = editingId;
   const error = await working(btn, "Saving…", () => postSettings({ accounts: [{ id, folder: $("#f-folder").value, fileName: $("#f-file").value,
-    group: $("#f-group").value, tags: $("#f-tags").value.split(",").map(t => t.trim()).filter(Boolean) }] }));
+    group: $("#f-group").value, tags: $("#f-tags").value.split(",").map(t => t.trim()).filter(Boolean), notify: $("#f-notify").checked }] }));
   if (error) return setMsg(row, `<span class="s-broken">${esc(error)}</span>`);
   editingId = null;
   $("#acctList").innerHTML = listHtml();
   $("#groupSuggest").innerHTML = (settingsData.groups || []).map(g => `<option value="${esc(g)}">`).join("");
+  // A new group shows up under Notifications; keep any unsaved edits there.
+  if (![...document.querySelectorAll("#notifyCard input[data-original]")].some(changed)) $("#notifyCard").innerHTML = notifyHtml();
   applyFilter();
   const moved = document.querySelector(`[data-account="${CSS.escape(id)}"]`);
   moved.scrollIntoView({ block: "nearest" });

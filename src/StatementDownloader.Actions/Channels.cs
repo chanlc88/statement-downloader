@@ -53,24 +53,49 @@ public sealed class NtfyChannel(string name, IReadOnlyDictionary<string, string>
     }
 }
 
-/// <summary>Email via SMTP. Settings: smtpHost, smtpPort, from, to; optional username, passwordSecret, ssl (default true).</summary>
-public sealed class EmailChannel(string name, IReadOnlyDictionary<string, string> settings, ISecretProvider secrets) : INotificationChannel
+/// <summary>
+/// Email via SMTP. Settings: smtpHost, smtpPort, from; optional to (comma-separated), username,
+/// passwordSecret, ssl (default true). A notification for a group with addresses in
+/// <c>notifications.groups</c> goes to those addresses instead of <c>to</c>.
+/// </summary>
+public sealed class EmailChannel(string name, IReadOnlyDictionary<string, string> settings, ISecretProvider secrets) : IEmailChannel
 {
     public string Name => name;
+    public bool HasDefaultRecipient => DefaultRecipients.Count > 0;
+    private List<string> DefaultRecipients => (settings.GetValueOrDefault("to") ?? "").Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+
+    /// <summary>Who <paramref name="n"/> goes to: its group's addresses, else the channel's <c>to</c>.</summary>
+    public IReadOnlyList<string> RecipientsFor(Notification n) => n.EmailTo is { Count: > 0 } to ? to : DefaultRecipients;
+
+    public static (string Subject, string Body) Compose(Notification n)
+    {
+        var prefix = n.Level switch { NotificationLevel.ActionNeeded => "[Action needed] ", NotificationLevel.HeadsUp => "[Heads-up] ", _ => "" };
+        var body = n.Message + (n.Link is null ? "" : $"\n\nOpen: {n.Link}") + "\n\n— Statement Downloader";
+        return (prefix + n.Title, body);
+    }
 
     public async Task SendAsync(Notification n, CancellationToken ct = default)
     {
         string Need(string key) => settings.GetValueOrDefault(key) ?? throw new InvalidDataException($"email channel '{name}' needs {key}.");
-        using var client = new SmtpClient(Need("smtpHost"), int.Parse(settings.GetValueOrDefault("smtpPort") ?? "587", CultureInfo.InvariantCulture))
+        var to = RecipientsFor(n);
+        if (to.Count == 0)
+            throw new InvalidDataException($"email channel '{name}' has no recipient: set its 'to', or email addresses for the account's group in notifications.groups.");
+        var host = Need("smtpHost");
+        using var client = new SmtpClient(host, int.Parse(settings.GetValueOrDefault("smtpPort") ?? "587", CultureInfo.InvariantCulture))
         {
             EnableSsl = !string.Equals(settings.GetValueOrDefault("ssl"), "false", StringComparison.OrdinalIgnoreCase),
         };
         if (settings.GetValueOrDefault("username") is { } user)
-            client.Credentials = new NetworkCredential(user, await secrets.GetValueAsync(Need("passwordSecret"), ct));
+        {
+            var password = await secrets.GetValueAsync(Need("passwordSecret"), ct);
+            // Gmail shows app passwords in groups of four; the spaces aren't part of it.
+            if (host.EndsWith("gmail.com", StringComparison.OrdinalIgnoreCase)) password = password.Replace(" ", "");
+            client.Credentials = new NetworkCredential(user, password);
+        }
 
-        var prefix = n.Level switch { NotificationLevel.ActionNeeded => "[Action needed] ", NotificationLevel.HeadsUp => "[Heads-up] ", _ => "" };
-        var body = n.Message + (n.Link is null ? "" : $"\n\nOpen: {n.Link}") + "\n\n— Statement Downloader";
-        using var msg = new MailMessage(Need("from"), Need("to"), prefix + n.Title, body);
+        var (subject, body) = Compose(n);
+        using var msg = new MailMessage { From = new MailAddress(Need("from")), Subject = subject, Body = body };
+        foreach (var address in to) msg.To.Add(address);
         await client.SendMailAsync(msg, ct);
     }
 }

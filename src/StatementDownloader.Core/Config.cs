@@ -58,6 +58,14 @@ public sealed class ScheduleDefaults
 
 public sealed class NotificationConfig
 {
+    /// <summary>False sends nothing on any channel; issues are still listed in the app.</summary>
+    public bool Enabled { get; set; } = true;
+    /// <summary>
+    /// Per account group (the accounts' <c>group</c>): who email notifications go to, and whether
+    /// that group's notifications are sent at all. Accounts in no listed group use the email
+    /// channel's own <c>to</c>.
+    /// </summary>
+    public Dictionary<string, NotificationGroupConfig> Groups { get; set; } = [];
     /// <summary>Channel definitions. Each has <c>type</c> and <c>name</c> plus type-specific keys.</summary>
     public List<Dictionary<string, string>> Channels { get; set; } = [];
     /// <summary>Channel names per level: actionNeeded, headsUp, info.</summary>
@@ -68,6 +76,19 @@ public sealed class NotificationConfig
     public bool Digest { get; set; }
     /// <summary>Local hour the digest is sent.</summary>
     public int DigestHour { get; set; } = 18;
+
+    /// <summary>The settings for <paramref name="group"/> (names compare ignoring case), if listed.</summary>
+    public NotificationGroupConfig? Group(string? group) =>
+        string.IsNullOrWhiteSpace(group) ? null
+        : Groups.FirstOrDefault(g => string.Equals(g.Key.Trim(), group.Trim(), StringComparison.OrdinalIgnoreCase)).Value;
+}
+
+public sealed class NotificationGroupConfig
+{
+    /// <summary>Addresses that email notifications for this group's accounts go to (instead of the channel's <c>to</c>).</summary>
+    public List<string> Email { get; set; } = [];
+    /// <summary>False sends nothing for this group's accounts on any channel.</summary>
+    public bool Enabled { get; set; } = true;
 }
 
 public sealed class AccountConfig
@@ -89,6 +110,8 @@ public sealed class AccountConfig
     /// <summary>Each entry has <c>type</c> plus action-specific keys.</summary>
     public List<Dictionary<string, string>> Actions { get; set; } = [];
     public bool Enabled { get; set; } = true;
+    /// <summary>False sends no notifications for this account on any channel (issues still show in the app).</summary>
+    public bool Notify { get; set; } = true;
 
     public string DisplayName => string.IsNullOrWhiteSpace(Name) ? Id : Name!;
     public string KindWord => Kind.ToString().ToLowerInvariant();
@@ -153,6 +176,13 @@ public static class ConfigLoader
             .Build();
         var config = deserializer.Deserialize<AppConfig>(yaml) ?? new AppConfig();
         config.DocumentsRoot = ExpandHome(config.DocumentsRoot);
+        config.Notifications ??= new();
+        config.Notifications.Groups ??= [];
+        foreach (var key in config.Notifications.Groups.Keys.ToList())
+        {
+            var g = config.Notifications.Groups[key] ??= new();
+            g.Email = (g.Email ?? []).Select(e => e.Trim()).Where(e => e.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        }
         foreach (var account in config.Accounts)
         {
             account.Tags = ConfigEditor.NormalizeTags(account.Tags ?? []);
@@ -189,8 +219,20 @@ public static class ConfigLoader
                 if (!act.ContainsKey("type")) errors.Add($"{at}: every action needs a type.");
             errors.AddRange(ActionKeys.Problems(a).Select(p => $"{at}: {p}"));
         }
+        foreach (var (name, g) in config.Notifications.Groups)
+        {
+            if (string.IsNullOrWhiteSpace(name)) errors.Add("notifications.groups: every group needs a name.");
+            foreach (var address in g?.Email ?? [])
+                if (EmailProblem(address) is { } p) errors.Add($"notifications.groups.{name}: {p}");
+        }
+        if (config.Notifications.Groups.Keys.GroupBy(k => k.Trim(), StringComparer.OrdinalIgnoreCase).FirstOrDefault(x => x.Count() > 1) is { } dup)
+            errors.Add($"notifications.groups: '{dup.Key}' is listed more than once.");
         if (errors.Count > 0) throw new InvalidDataException("Config is not valid:\n  - " + string.Join("\n  - ", errors));
     }
+
+    /// <summary>Why <paramref name="address"/> isn't usable as an email address, or null.</summary>
+    public static string? EmailProblem(string? address) =>
+        Regex.IsMatch(address ?? "", @"^[^@\s,;<>""]+@[^@\s,;<>""]+\.[^@\s,;<>""]+$") ? null : $"'{address}' isn't an email address.";
 
     /// <summary>Lets <c>schedule: auto</c> be written as a plain scalar.</summary>
     private sealed class ScheduleConfigConverter : IYamlTypeConverter

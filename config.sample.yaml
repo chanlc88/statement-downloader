@@ -29,6 +29,7 @@ schedule:            # defaults for every account
   reminderHours: 24      # remind about open action-needed issues this often
 
 notifications:
+  enabled: true          # false = send nothing (issues still show in the app)
   channels:
     - type: ntfy
       name: phone
@@ -36,16 +37,26 @@ notifications:
       topic: replace-with-a-long-random-topic-name
     - type: email
       name: email
-      smtpHost: smtp.example.com
+      smtpHost: smtp.example.com     # Gmail: smtp.gmail.com with an app password
       smtpPort: "587"
       from: statements@example.com
-      to: you@example.com
+      to: you@example.com            # for accounts whose group has no addresses below
       username: you@example.com
-      passwordSecret: bitwarden:00000000-0000-0000-0000-000000000000
+      # A secret reference, never the password itself. keychain:<name> is the Windows
+      # Credential Manager / macOS Keychain: statement-downloader secrets set-token smtp-password
+      passwordSecret: keychain:smtp-password
   routes:
     actionNeeded: [phone, email]
-    headsUp: [phone]
+    headsUp: [phone, email]
     info: [email]
+  # Who gets each account group's notifications by email (every notification: problems,
+  # sign-ins, new documents, documents waiting for review, reminders). Also on the Settings page.
+  groups:
+    "My Rental LLC":
+      email: [rentals@example.com]
+    Personal:
+      email: [you@example.com]
+      # enabled: false    # send nothing for this group's accounts
   quietHours: "22:00-07:00"
   digest: false          # true = collect info notifications into one daily email
   digestHour: 18
@@ -54,7 +65,8 @@ accounts:
   - id: dekalb-water
     name: DeKalb Water
     # Optional: the section it's listed under, and labels to filter by.
-    group: "My Rental LLC"
+    group: "My Rental LLC"          # its notifications go to that group's addresses
+    # notify: false                 # send no notifications for this account
     tags: [utility, water]
     site: dekalb-water
     kind: bill

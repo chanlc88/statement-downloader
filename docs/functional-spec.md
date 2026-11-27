@@ -104,6 +104,7 @@ running agent without a restart. Documents already saved are not moved.
 | `review` | no | `true` = new documents wait in the review list before actions run. Default `false`. |
 | `actions` | no | List of actions to run on each new document (§5). |
 | `enabled` | no | Default `true`. |
+| `notify` | no | `false` = send no notifications for this account on any channel (its issues still show in the UI). Default `true`. |
 
 ## 4. Scheduling
 
@@ -299,7 +300,54 @@ after."*
 Each level is routed to one or more channels (e.g. action-needed → phone, info →
 email digest). Quiet hours hold pushes until they end.
 
-### 8.3 Issues
+The `email` channel's settings are `smtpHost`, `smtpPort` (default 587), `from`, `to`
+(optional, comma-separated), `username`, `passwordSecret` and `ssl` (default `true`). The
+password is a secret reference, never the password itself: for example
+`keychain:smtp-password` after `statement-downloader secrets set-token smtp-password`
+(Windows Credential Manager / macOS Keychain), or `bitwarden:<secret-id>`. For Gmail use
+`smtp.gmail.com`, port 587 and an app password.
+
+### 8.3 Who gets emails: groups
+
+Every notification belongs to an account (the daily summary belongs to a group), so it
+can go to the people responsible for that account. Recipients are set per account
+**group** (the account's `group`, §3.3), under `notifications.groups`:
+
+```yaml
+notifications:
+  enabled: true                  # false = nothing is sent on any channel
+  groups:
+    "Maple Street Rentals":
+      email: [rentals@example.com]
+    Personal:
+      email: [me@example.com, partner@example.com]
+    "Old Business":
+      enabled: false             # nothing is sent for this group's accounts
+```
+
+- An email for an account goes to its group's `email` addresses instead of the email
+  channel's `to`. Group names compare ignoring case.
+- Accounts with no group, and groups with no addresses, use the channel's `to`; if it has
+  none, the email fails and the Activity list says why.
+- This covers **every** notification: problems, sign-ins, reminders, new documents,
+  documents waiting for review, action results and "resolved" notices. Which levels are
+  emailed at all is still set by `routes`. To email everything, list the email channel for
+  `actionNeeded`, `headsUp` and `info`.
+- Other channels (e.g. `ntfy`) aren't affected by the addresses; they follow `routes`.
+- With `digest: true`, the daily summary is one email per group, listing only that
+  group's accounts.
+- **Switches.** Notifications can be turned off at three levels: everything
+  (`notifications.enabled: false`), a group (`enabled: false` under it), or one account
+  (`notify: false`). Nothing is then sent on any channel. Issues still open and show
+  under *Needs you*, and *Activity* lists each notification as "not sent" with the reason.
+  The switches are checked when a notification is actually sent, so reminders and held
+  notifications follow the current settings.
+- **Send test** sends one test per channel, and one email per group with addresses, so
+  each recipient can confirm it arrives.
+
+All of this can be changed on the Settings page (§9).
+
+### 8.4 Issues
 
 Action-needed and heads-up notifications open an **issue** keyed to its cause (e.g.
 the account's sign-in). While it is open the same cause doesn't produce new
@@ -320,14 +368,18 @@ A local web UI at `http://localhost:5187` (localhost only):
   which accounts wait for review and why; and the latest decisions with what ran.
 - **Settings** — the base folder, and each account's group, tags, folder and file name (with a
   live preview, token buttons that insert at the cursor, and Save / Cancel that stay on screen).
-  **Add account** adds one from a form: the site (its options appear), a name, the login (a
+  **Notifications** turns all notifications on or off and, for each group, sets the email
+  addresses its notifications go to and whether they're sent; it also says which levels are
+  emailed and has *Send test*. Each account's editor has *Send notifications for this
+  account*. **Add account** adds one from a form: the site (its options appear), a name, the login (a
   Bitwarden secret id, or a reference such as `keychain:name`), group, tags, folder and file
   name. The app checks that the login can be read, adds the account to `config.yaml`, and
   records the documents already in its folder; the first sign-in is then *Sign in now*.
 - **Issues** — *Needs you* (each issue with a short reason, the button that fixes its cause
   — *Sign in*, *Check now*, *Open PDF* — and any automation log collapsed under *Technical
   details*), *Worth knowing* (heads-ups), and *Activity*: every notification, including ones
-  held for quiet hours or the daily summary, with where it went or when it will be sent.
+  held for quiet hours or the daily summary, with where it went (including the email
+  addresses) or when it will be sent, or why it wasn't sent (notifications off).
 - **Account** — status, when it was last checked, how it signs in; when its documents come
   and how SD checks for them, in words; documents by year (the newest open, each with *Open*
   and *Show in folder*); recent sign-ins.

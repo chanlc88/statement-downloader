@@ -44,7 +44,7 @@ public sealed class AppServices : IDisposable
         var auth = new JsonAuthStateStore(paths);
         var schedule = new JsonScheduleStateStore(paths);
         var notify = new NotificationCenter(NotificationChannels.Create(config.Notifications.Channels, secrets, Http),
-            config.Notifications, config.Schedule, paths, clock, zone, loggers.CreateLogger<NotificationCenter>());
+            config.Notifications, config.Schedule, paths, clock, zone, loggers.CreateLogger<NotificationCenter>(), () => config.Accounts);
         var actionRunner = new ActionRunner(actions, secrets, documents, schedule, notify, links, clock, loggers);
         var runner = new AccountRunner(config, paths, sites, secrets, auth, documents, schedule, actionRunner, notify, links, clock, loggers);
         var ticks = new TickRunner(config, paths, runner, documents, schedule, auth, notify, links, clock, zone, loggers.CreateLogger<TickRunner>());

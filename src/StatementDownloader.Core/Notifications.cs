@@ -13,12 +13,23 @@ public sealed record Notification
     public string? AccountId { get; init; }
     /// <summary>Link to open (e.g. the UI's sign-in page for the account).</summary>
     public string? Link { get; init; }
+    /// <summary>The account group it's for, when it has no single account (e.g. a group's daily summary).</summary>
+    public string? Group { get; init; }
+    /// <summary>Set when sending: the group's email addresses, used by email channels instead of their own <c>to</c>.</summary>
+    public IReadOnlyList<string>? EmailTo { get; init; }
 }
 
 public interface INotificationChannel
 {
     string Name { get; }
     Task SendAsync(Notification notification, CancellationToken ct = default);
+}
+
+/// <summary>A channel that sends to addresses: honours <see cref="Notification.EmailTo"/>.</summary>
+public interface IEmailChannel : INotificationChannel
+{
+    /// <summary>Whether it has its own recipient for notifications that aren't for a group with addresses.</summary>
+    bool HasDefaultRecipient { get; }
 }
 
 /// <summary>Something waiting on the user, keyed to its cause so it's reported once.</summary>
@@ -54,6 +65,8 @@ public sealed class NotificationLogEntry
     public Notification Notification { get; set; } = null!;
     public List<string> Channels { get; set; } = [];
     public string? Error { get; set; }
+    /// <summary>Why nothing was sent, when notifications were off for it.</summary>
+    public string? Skipped { get; set; }
 }
 
 public sealed class NotificationData
@@ -74,7 +87,8 @@ public sealed class NotificationCenter(
     AppPaths paths,
     TimeProvider clock,
     TimeZoneInfo zone,
-    ILogger<NotificationCenter> log)
+    ILogger<NotificationCenter> log,
+    Func<IReadOnlyList<AccountConfig>>? accounts = null)
 {
     private const int MaxLog = 500;
     private readonly Dictionary<string, INotificationChannel> _channels = channels.ToDictionary(c => c.Name, StringComparer.OrdinalIgnoreCase);
@@ -151,10 +165,18 @@ public sealed class NotificationCenter(
             Message = $"Notifications from {Environment.MachineName} are working.",
         };
         var results = new List<(string, string?)>();
+        async Task Try(string label, INotificationChannel ch, Notification msg)
+        {
+            try { await ch.SendAsync(msg, ct); results.Add((label, null)); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { results.Add((label, ex.Message)); }
+        }
         foreach (var ch in _channels.Values)
         {
-            try { await ch.SendAsync(n, ct); results.Add((ch.Name, null)); }
-            catch (Exception ex) when (ex is not OperationCanceledException) { results.Add((ch.Name, ex.Message)); }
+            if (ch is not IEmailChannel email) { await Try(ch.Name, ch, n); continue; }
+            if (email.HasDefaultRecipient) await Try(ch.Name, ch, n);
+            // One test per group with addresses, so every recipient can confirm it arrives.
+            foreach (var (group, g) in config.Groups.Where(g => g.Value.Email.Count > 0))
+                await Try($"{ch.Name} → {group}", ch, n with { Group = group, EmailTo = g.Email, Message = n.Message + $" This address gets notifications for {group}." });
         }
         return results;
     }
@@ -200,20 +222,49 @@ public sealed class NotificationCenter(
 
         foreach (var r in reminders) await SendNowAsync(r, ct);
         foreach (var h in released.Where(h => !h.Digest)) await SendNowAsync(h.Notification, ct);
-        var digestItems = released.Where(h => h.Digest).Select(h => h.Notification).ToList();
-        if (digestItems.Count > 0)
+        // One summary per group, so each group's recipients only see their own accounts.
+        foreach (var items in released.Where(h => h.Digest).Select(h => h.Notification).GroupBy(GroupOf, StringComparer.OrdinalIgnoreCase))
+        {
+            // Muted items aren't listed; the summary itself belongs to no single account.
+            var shown = items.Where(d => MutedBecause(d) is null).ToList();
+            if (shown.Count == 0) continue;
             await SendNowAsync(new Notification
             {
                 Level = NotificationLevel.Info,
-                Title = $"Statement Downloader daily summary ({digestItems.Count})",
-                Message = string.Join("\n", digestItems.Select(d => $"• {d.Title} — {d.Message}")),
+                Group = items.Key,
+                Title = $"Statement Downloader daily summary ({shown.Count})" + (items.Key is { } g ? $" — {g}" : ""),
+                Message = string.Join("\n", shown.Select(d => $"• {d.Title} — {d.Message}")),
             }, ct);
+        }
+    }
+
+    private AccountConfig? AccountOf(Notification n) =>
+        n.AccountId is null ? null : accounts?.Invoke().FirstOrDefault(a => string.Equals(a.Id, n.AccountId, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>The account group a notification belongs to (its own, else its account's).</summary>
+    public string? GroupOf(Notification n) => n.Group ?? AccountOf(n)?.Group;
+
+    /// <summary>Why <paramref name="n"/> isn't sent (notifications off for everything, its group or its account), or null.</summary>
+    public string? MutedBecause(Notification n)
+    {
+        if (!config.Enabled) return "notifications are off";
+        if (AccountOf(n) is { Notify: false } a) return $"notifications are off for {a.DisplayName}";
+        if (GroupOf(n) is { } group && config.Group(group) is { Enabled: false }) return $"notifications are off for {group}";
+        return null;
     }
 
     private async Task SendNowAsync(Notification n, CancellationToken ct)
     {
+        if (MutedBecause(n) is { } muted)
+        {
+            log.LogInformation("Not sent ({Why}): {Title}", muted, n.Title);
+            await AppendLogAsync(new NotificationLogEntry { AtUtc = clock.GetUtcNow(), Notification = n, Skipped = muted }, ct);
+            return;
+        }
         var levelKey = n.Level switch { NotificationLevel.ActionNeeded => "actionNeeded", NotificationLevel.HeadsUp => "headsUp", _ => "info" };
         var names = config.Routes.TryGetValue(levelKey, out var r) ? r : [];
+        if (config.Group(GroupOf(n)) is { Email.Count: > 0 } g && names.Any(x => _channels.GetValueOrDefault(x) is IEmailChannel))
+            n = n with { EmailTo = g.Email };
         var sentTo = new List<string>();
         string? error = null;
         log.Log(n.Level == NotificationLevel.ActionNeeded ? LogLevel.Warning : LogLevel.Information, "[{Level}] {Title}: {Message}", n.Level, n.Title, n.Message);
@@ -227,12 +278,15 @@ public sealed class NotificationCenter(
                 log.LogError(ex, "Notification channel {Channel} failed", name);
             }
         }
-        await JsonFile.UpdateAsync<NotificationData>(FilePath, d =>
+        await AppendLogAsync(new NotificationLogEntry { AtUtc = clock.GetUtcNow(), Notification = n, Channels = sentTo, Error = error }, ct);
+    }
+
+    private Task AppendLogAsync(NotificationLogEntry entry, CancellationToken ct) =>
+        JsonFile.UpdateAsync<NotificationData>(FilePath, d =>
         {
-            d.Log.Add(new NotificationLogEntry { AtUtc = clock.GetUtcNow(), Notification = n, Channels = sentTo, Error = error });
+            d.Log.Add(entry);
             if (d.Log.Count > MaxLog) d.Log.RemoveRange(0, d.Log.Count - MaxLog);
         }, ct);
-    }
 
     /// <summary>If <paramref name="now"/> is in quiet hours, when they end.</summary>
     public DateTimeOffset? QuietUntil(DateTimeOffset now)

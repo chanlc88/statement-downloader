@@ -6,7 +6,7 @@ public class ConfigEditorTests
 {
     // Raw string literals keep the source file's line endings, and a Windows checkout turns them
     // into CRLF. The tests below edit this text with "\n" patterns, so pin it to LF.
-    private static readonly string Yaml = """
+    internal static readonly string Yaml = """
         # My config — comments must survive edits
         documentsRoot: "G:/My Drive"   # Google Drive on this PC
 
@@ -231,5 +231,59 @@ public class AccountLocationTests
         var result = ConfigEditor.AddAccount("documentsRoot: \"~/Docs\"\naccounts: []\n", [("id", "gas"), ("site", "scana-energy"), ("credential", "env:Y"), ("folder", "\"Gas\""), ("fileName", "\"{date:yyyy-MM-dd}.pdf\"")]);
         Assert.Equal("gas", Assert.Single(ConfigEditor.Check(result).Accounts).Id);
         Assert.Contains("accounts:\n  - id: gas\n    site: scana-energy\n", result);
+    }
+
+    [Fact]
+    public void Adds_notification_groups_and_switches_when_there_is_no_notifications_section()
+    {
+        var edited = ConfigEditor.SetNotificationGroups(ConfigEditorTests.Yaml, [("Maple Rentals", ["maple@example.com"], true), ("Personal", [], false)]);
+        edited = ConfigEditor.SetNotificationsEnabled(edited, false);
+        var n = ConfigEditor.Check(edited).Notifications;
+        Assert.False(n.Enabled);
+        Assert.Equal(["maple@example.com"], n.Group("Maple Rentals")!.Email);
+        Assert.False(n.Group("Personal")!.Enabled);
+        Assert.True(edited.IndexOf("notifications:", StringComparison.Ordinal) < edited.IndexOf("accounts:", StringComparison.Ordinal));
+        Assert.Contains("# where bills go", edited);
+        Assert.Equal(2, ConfigEditor.Check(edited).Accounts.Count);
+    }
+
+    [Fact]
+    public void Replaces_notification_groups_and_keeps_the_rest_of_the_section()
+    {
+        var yaml = """
+            documentsRoot: /docs
+            notifications:
+              channels:
+                - type: ntfy
+                  name: phone
+                  topic: t
+              # who gets emails
+              groups:
+                Old: { email: [old@example.com] }
+              quietHours: "22:00-07:00"   # nights
+            accounts: []
+            """.ReplaceLineEndings("\n");
+        var edited = ConfigEditor.SetNotificationGroups(yaml, [("New", ["new@example.com"], true)]);
+        var n = ConfigEditor.Check(edited).Notifications;
+        Assert.Null(n.Group("Old"));
+        Assert.Equal(["new@example.com"], n.Group("New")!.Email);
+        Assert.Equal("22:00-07:00", n.QuietHours);
+        Assert.Equal("phone", n.Channels.Single()["name"]);
+        Assert.Contains("# who gets emails", edited);
+        Assert.Contains("# nights", edited);
+
+        var cleared = ConfigEditor.SetNotificationsEnabled(ConfigEditor.SetNotificationGroups(edited, []), true);
+        Assert.Empty(ConfigEditor.Check(cleared).Notifications.Groups);
+        Assert.DoesNotContain("groups:", cleared);
+        Assert.DoesNotContain("enabled:", cleared);
+    }
+
+    [Fact]
+    public void Turns_an_accounts_notifications_off_and_on()
+    {
+        var off = ConfigEditor.SetAccountNotify(ConfigEditorTests.Yaml, "gas", false);
+        Assert.False(ConfigEditor.Check(off).Accounts.Single(a => a.Id == "gas").Notify);
+        Assert.True(ConfigEditor.Check(off).Accounts.Single(a => a.Id == "water").Notify);
+        Assert.Equal(ConfigEditorTests.Yaml, ConfigEditor.SetAccountNotify(off, "gas", true));
     }
 }

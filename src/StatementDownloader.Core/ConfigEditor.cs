@@ -35,6 +35,84 @@ public static class ConfigEditor
         return SetAccountEntry(yaml, accountId, "tags", list.Count == 0 ? null : "[" + string.Join(", ", list.Select(Quote)) + "]");
     }
 
+    /// <summary>Turns the account's notifications off (<c>notify: false</c>) or back on (removes the key).</summary>
+    public static string SetAccountNotify(string yaml, string accountId, bool notify) =>
+        SetAccountEntry(yaml, accountId, "notify", notify ? null : "false");
+
+    /// <summary>Sets <c>notifications.enabled</c>; on removes the key (it's the default).</summary>
+    public static string SetNotificationsEnabled(string yaml, bool enabled) =>
+        SetNotificationsEntry(yaml, "enabled", enabled ? null : ["false"], atTop: true);
+
+    /// <summary>
+    /// Replaces <c>notifications.groups</c> with <paramref name="groups"/> (no groups removes the key).
+    /// The groups block is rewritten as a whole; the rest of the file is kept as written.
+    /// </summary>
+    public static string SetNotificationGroups(string yaml, IEnumerable<(string Name, IReadOnlyList<string> Email, bool Enabled)> groups)
+    {
+        var block = new List<string>();
+        foreach (var (name, email, enabled) in groups)
+        {
+            block.Add($"  {Quote(name.Trim())}:");
+            block.Add($"    email: [{string.Join(", ", email.Select(e => Quote(e.Trim())))}]");
+            if (!enabled) block.Add("    enabled: false");
+        }
+        return SetNotificationsEntry(yaml, "groups", block.Count == 0 ? null : ["", .. block], atTop: false);
+    }
+
+    /// <summary>
+    /// Replaces (or adds, or with null removes) one key of the top-level <c>notifications:</c> map.
+    /// <paramref name="value"/>'s first item goes on the key's line; the rest are lines below it,
+    /// indented relative to the key.
+    /// </summary>
+    private static string SetNotificationsEntry(string yaml, string key, IReadOnlyList<string>? value, bool atTop)
+    {
+        var lines = Split(yaml, out var nl);
+        var start = lines.FindIndex(l => Regex.IsMatch(l, @"^notifications\s*:"));
+        if (start >= 0 && !Regex.IsMatch(lines[start], @"^notifications\s*:\s*(\{\s*\})?\s*(#.*)?$"))
+            throw new InvalidDataException("Settings can only change notifications written as a block ('notifications:' on its own line). Edit config.yaml by hand.");
+        if (start < 0)
+        {
+            if (value is null) return yaml;
+            var accounts = lines.FindIndex(l => Regex.IsMatch(l, @"^accounts\s*:"));
+            var at = accounts >= 0 ? accounts : lines.Count;
+            lines.InsertRange(at, accounts >= 0 ? ["notifications:", ""] : ["", "notifications:"]);
+            start = accounts >= 0 ? at : at + 1;
+        }
+        else lines[start] = Regex.Replace(lines[start], @"\s*\{\s*\}", "");
+
+        var end = start + 1;
+        while (end < lines.Count && !(lines[end].Length > 0 && !char.IsWhiteSpace(lines[end][0]) && !lines[end].StartsWith('#'))) end++;
+        var firstChild = lines.Skip(start + 1).Take(end - start - 1).FirstOrDefault(l => l.Trim().Length > 0 && !l.TrimStart().StartsWith('#'));
+        var indent = firstChild is null ? 2 : firstChild.Length - firstChild.TrimStart().Length;
+        var pad = new string(' ', indent);
+
+        var keyRe = new Regex($@"^ {{{indent}}}{Regex.Escape(key)}\s*:");
+        var existing = lines.FindIndex(start + 1, end - start - 1, l => keyRe.IsMatch(l));
+        var newLines = value is null ? [] : new List<string> { $"{pad}{key}:{(value[0].Length > 0 ? " " + value[0] : "")}" }
+            .Concat(value.Skip(1).Select(l => pad + l)).ToList();
+        if (existing >= 0)
+        {
+            var spanEnd = existing + 1;
+            while (spanEnd < end && (lines[spanEnd].Trim().Length == 0 || lines[spanEnd].Length - lines[spanEnd].TrimStart().Length > indent)) spanEnd++;
+            while (spanEnd > existing + 1 && lines[spanEnd - 1].Trim() is "" or ['#', ..]) spanEnd--;
+            var comment = spanEnd == existing + 1 && newLines.Count == 1 ? TrailingComment(lines[existing]) : "";
+            lines.RemoveRange(existing, spanEnd - existing);
+            if (newLines.Count > 0) newLines[0] += comment;
+            lines.InsertRange(existing, newLines);
+        }
+        else if (newLines.Count > 0)
+        {
+            var insert = start + 1;
+            if (!atTop)
+            {
+                insert = end;
+                while (insert > start + 1 && lines[insert - 1].Trim() is "" or ['#', ..]) insert--;
+            }
+            lines.InsertRange(insert, newLines);
+        }
+        return string.Join(nl, lines);
+    }
+
     /// <summary>Trimmed, lower-case, de-duplicated tags in the order given.</summary>
     public static List<string> NormalizeTags(IEnumerable<string> tags) =>
         tags.Select(t => t.Trim().ToLowerInvariant()).Where(t => t.Length > 0).Distinct().ToList();

@@ -131,6 +131,27 @@ then `*.yaml` in the `sites` folder next to the config file; a later entry with 
 same id replaces an earlier one. Recipes are never fetched at run time, because a
 recipe decides where credentials are typed.
 
+## 5a. Notification routing
+
+`NotificationCenter` decides, when a notification is actually sent (immediately, after
+quiet hours, as a reminder, or in the daily summary):
+
+1. **Muted?** `MutedBecause(n)` checks `notifications.enabled`, the account's `notify`, and
+   the group's `enabled`, using the live config (Settings changes apply without a
+   restart). A muted notification is logged with `Skipped` and sent nowhere. The issue
+   stays open.
+2. **Group.** `GroupOf(n)` is `n.Group` (set for a group's daily summary) or the account's
+   `group`. If `notifications.groups` lists addresses for it and the level's route includes
+   an email channel, the notification is sent with `EmailTo` set to them.
+3. **Channels.** The level's `routes` pick the channels. `EmailChannel` (an `IEmailChannel`)
+   sends to `EmailTo` when set, else to its own `to`; other channels ignore `EmailTo`.
+
+Digest items are grouped by `GroupOf`, giving one summary per group. The SMTP password is
+a secret reference resolved per send (`keychain:` = Windows Credential Manager / macOS
+Keychain), never stored in YAML. Settings edits `notifications.enabled`,
+`notifications.groups` (rewritten as a block) and each account's `notify` through
+`ConfigEditor`, keeping the rest of the file as written.
+
 ## 6. Persistence
 
 All state is JSON in the per-user data folder (Windows `%LOCALAPPDATA%\statement-downloader`,
@@ -177,7 +198,8 @@ interfaces so SQLite can replace them later.
   ([how](site-recipes.md#writing-a-recipe)). Only when a recipe can't express the
   site, derive from `PlaywrightSiteFetcher` and add it to `SiteRegistry.CodeSites`.
 - **New action**: implement `IDocumentAction` with a unique `Type` and register it.
-- **New notification channel**: implement `INotificationChannel`.
+- **New notification channel**: implement `INotificationChannel` (or `IEmailChannel`, to
+  receive the group's addresses in `Notification.EmailTo`).
 
 ## 10. Open questions
 
