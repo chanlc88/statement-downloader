@@ -63,6 +63,8 @@ public interface ISiteFetcher
     string DisplayName { get; }
     /// <summary>The site is only visited with the person present (assisted every time).</summary>
     bool NeedsPerson => false;
+    /// <summary>The site emails a sign-in code that can be read from the configured mailbox.</summary>
+    bool EmailsCode => false;
     Task<SiteResult> RunAsync(SiteContext context, CancellationToken ct = default);
 }
 

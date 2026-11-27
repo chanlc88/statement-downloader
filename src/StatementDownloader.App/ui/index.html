@@ -26,6 +26,11 @@
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; }
   .card h2 { font-size: 16px; margin: 0 0 2px; }
   .card h2 a { color: inherit; text-decoration: none; }
+  .signin-mode { margin: -16px -18px 12px; padding: 6px 18px; border-radius: 10px 10px 0 0; font-size: 13px; font-weight: 600; border-bottom: 1px solid var(--line); }
+  .signin-mode.own { background: color-mix(in srgb, var(--ok) 16%, var(--panel)); color: var(--ok); }
+  .signin-mode.remembered { background: color-mix(in srgb, var(--accent) 16%, var(--panel)); color: var(--accent); }
+  .signin-mode.every-time { background: color-mix(in srgb, var(--warn) 18%, var(--panel)); color: var(--warn); }
+  .signin-mode span { display: block; font-weight: 400; color: var(--muted); font-size: 12.5px; }
   .row { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; border-top: 1px solid var(--line); }
   .row:first-of-type { border-top: 0; }
   .row span:first-child { color: var(--muted); }
@@ -165,8 +170,14 @@ const sharedHtml = a => (a.sharesSignInWith || []).length
   ? `<div class="row"><span>Shared login</span><span class="muted" title="One sign-in covers these accounts; Sign in now fetches them all">Same sign-in as ${esc(a.sharesSignInWith.join(", "))}</span></div>`
   : "";
 
+/** Banner: whether the account signs in on its own, once you've signed in, or with you every time. */
+const signInModeHtml = (a, full) => a.signIn
+  ? `<div class="signin-mode ${a.signIn.mode}" title="${esc(a.signIn.detail)}">${esc(a.signIn.title)}${full ? `<span>${esc(a.signIn.detail)}</span>` : ""}</div>`
+  : "";
+
 function card(a) {
   return `<div class="card">
+    ${signInModeHtml(a, true)}
     <h2><a href="/accounts/${a.id}" data-nav>${esc(a.name)}</a></h2>
     <div class="muted" style="margin-bottom:8px">${esc(a.site)} · ${esc(a.kind)}s${tagsHtml(a.tags)}</div>
     <div class="row"><span>Sign-in</span><span class="pill s-${a.auth.status}">${statusText[a.auth.status] || a.auth.status}</span></div>

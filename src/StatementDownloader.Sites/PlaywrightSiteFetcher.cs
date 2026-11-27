@@ -42,6 +42,7 @@ public abstract class PlaywrightSiteFetcher : ISiteFetcher
     /// </summary>
     protected virtual bool YourBrowser => false;
     public bool NeedsPerson => AttendedOnly || YourBrowser;
+    public virtual bool EmailsCode => false;
 
     public async Task<SiteResult> RunAsync(SiteContext ctx, CancellationToken ct = default)
     {

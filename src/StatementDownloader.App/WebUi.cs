@@ -55,11 +55,12 @@ public static class WebUi
         api.MapGet("/status", async (AppServices s, RunTracker runs, CancellationToken ct) =>
         {
             var statuses = await s.Ticks.GetStatusAsync(ct);
+            var events = await s.Auth.GetEventsAsync(null, ct);
             return Results.Ok(new
             {
                 machine = Environment.MachineName,
                 documentsRoot = s.Config.DocumentsRoot,
-                accounts = statuses.Select(st => AccountView(st, runs, s.Config)),
+                accounts = statuses.Select(st => AccountView(st, runs, s, events)),
             });
         });
 
@@ -71,7 +72,7 @@ public static class WebUi
             var events = await s.Auth.GetEventsAsync(id, ct);
             return Results.Ok(new
             {
-                account = AccountView(st, runs, s.Config),
+                account = AccountView(st, runs, s, events),
                 documents = docs.OrderByDescending(d => d.DocumentDate).Select(d => new { d.Id, date = d.DocumentDate, d.StatementNumber, d.Amount, d.Path, d.Imported, d.FirstSeenUtc, review = d.Review, actions = d.Actions }),
                 signIns = events.OrderByDescending(e => e.AtUtc).Take(50),
             });
@@ -269,11 +270,36 @@ public static class WebUi
         return Results.Accepted(value: new { started = true });
     }
 
-    private static object AccountView(AccountStatus st, RunTracker runs, AppConfig config)
+    /// <summary>
+    /// How the account signs in, for the banner on its card: on its own, on its own once you've signed
+    /// in (while this PC is remembered), or with you every time.
+    /// </summary>
+    private static object SignInMode(AccountStatus st, AppServices s, IReadOnlyList<AuthEvent> events)
     {
         var a = st.Account;
+        var site = s.Sites.GetValueOrDefault(a.Site);
+        if (site?.NeedsPerson == true)
+            return new { mode = "every-time", title = "Needs you every time",
+                detail = "This site refuses background sign-ins. When a check is due, SD asks you to choose Sign in now; a browser window opens, SD fills your login, and you finish any check or code." };
+        if (site?.EmailsCode == true && s.Config.Mailbox is not null)
+            return new { mode = "own", title = "Signs in on its own",
+                detail = $"When the site emails a sign-in code, SD reads it from {s.Config.Mailbox.Username}." };
+        var logins = Logins.Siblings(s.Config, a).Select(x => x.Id).Append(a.Id).ToHashSet();
+        if (events.Any(e => logins.Contains(e.AccountId) && e.Assisted && e.Succeeded))
+            return new { mode = "remembered", title = "Signs in on its own after you've signed in once",
+                detail = st.Auth.RememberedUntilUtc is { } until
+                    ? $"This PC is remembered until about {until.ToLocalTime():MMM d}; after that SD asks you to sign in again."
+                    : "SD uses the sign-in you completed; when the site forgets this PC, it asks you again." };
+        return new { mode = "own", title = "Signs in on its own", detail = "SD signs in with the saved login; no code or check needed so far." };
+    }
+
+    private static object AccountView(AccountStatus st, RunTracker runs, AppServices s, IReadOnlyList<AuthEvent> events)
+    {
+        var a = st.Account;
+        var config = s.Config;
         return new
         {
+            signIn = SignInMode(st, s, events),
             a.Id,
             name = a.DisplayName,
             group = a.Group,

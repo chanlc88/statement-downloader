@@ -15,6 +15,7 @@ public sealed class RecipeSiteFetcher(SiteRecipe recipe) : PlaywrightSiteFetcher
     protected override IReadOnlyCollection<string>? SignInCookieNames => recipe.SignIn.RememberCookies;
     protected override bool AttendedOnly => recipe.SignIn.Attended;
     protected override bool YourBrowser => recipe.SignIn.YourBrowser;
+    public override bool EmailsCode => recipe.SignIn.EmailCode is not null;
 
     private SignInRecipe S => recipe.SignIn;
 
