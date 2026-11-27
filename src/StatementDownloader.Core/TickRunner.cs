@@ -112,8 +112,8 @@ public sealed class TickRunner(
     public async Task<(CycleEstimate? Estimate, IReadOnlyList<DocumentRecord> Documents)> EstimateAsync(AccountConfig account, CancellationToken ct = default)
     {
         var docs = await documents.GetAsync(account.Id, ct);
-        var delays = docs.Where(d => d.FirstSeenUtc is not null && !d.Imported)
-            .Select(d => DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(d.FirstSeenUtc!.Value, zone).DateTime).DayNumber - d.DocumentDate.DayNumber);
+        var delays = CycleEstimator.PostingDelays(docs.Where(d => d.FirstSeenUtc is not null && !d.Imported)
+            .Select(d => (d.DocumentDate, DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(d.FirstSeenUtc!.Value, zone).DateTime))));
         return (CycleEstimator.Estimate(docs.Select(d => d.DocumentDate), delays, config.Schedule.MinSpreadDays, config.Schedule.MaxSpreadDays), docs);
     }
 

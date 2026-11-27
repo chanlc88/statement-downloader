@@ -37,6 +37,23 @@ public static class CycleEstimator
         return new(interval, spread, delay, last, next, next.AddDays(-spread), next.AddDays(spread));
     }
 
+    /// <summary>
+    /// How long each document took to appear online, from when it was found. Only documents found
+    /// as they came out count: not the backlog fetched on the account's first day of downloads,
+    /// and not older documents fetched together with a newer one (catching up after a gap).
+    /// </summary>
+    public static IEnumerable<int> PostingDelays(IEnumerable<(DateOnly Document, DateOnly Found)> found)
+    {
+        var list = found.ToList();
+        if (list.Count == 0) return [];
+        var firstDay = list.Min(f => f.Found);
+        return list.Where(f => f.Found != firstDay)
+            .GroupBy(f => f.Found)
+            .Select(day => day.Max(f => f.Document))
+            .Select(newest => list.First(f => f.Document == newest).Found.DayNumber - newest.DayNumber)
+            .ToList();
+    }
+
     private static double Median(IReadOnlyList<int> values)
     {
         var sorted = values.Order().ToList();

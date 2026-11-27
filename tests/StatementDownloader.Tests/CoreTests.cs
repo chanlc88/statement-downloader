@@ -28,6 +28,18 @@ public class CycleEstimatorTests
         Assert.Null(CycleEstimator.Estimate(Monthly.Take(2), []));
 
     [Fact]
+    public void Posting_delay_ignores_catch_up_downloads()
+    {
+        static DateOnly D(int m, int d) => new(2026, m, d);
+        // First day: the backlog (Oct 8, Nov 5) fetched weeks late doesn't count.
+        Assert.Empty(CycleEstimator.PostingDelays([(D(10, 8), D(11, 26)), (D(11, 5), D(11, 26))]));
+        // Later: a statement found 2 days after its date counts; after a gap, only the newest of a
+        // batch counts (Jan 5 found Feb 9 alongside Feb 6 → 3 days, not 35).
+        Assert.Equal([2, 3], CycleEstimator.PostingDelays([
+            (D(10, 8), D(11, 26)), (D(12, 5), D(12, 7)), (D(1, 5).AddYears(1), D(2, 9).AddYears(1)), (D(2, 6).AddYears(1), D(2, 9).AddYears(1))]));
+    }
+
+    [Fact]
     public void Spread_is_clamped()
     {
         var steady = Enumerable.Range(0, 6).Select(i => new DateOnly(2026, 1, 5).AddDays(30 * i));
