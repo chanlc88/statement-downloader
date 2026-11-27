@@ -44,7 +44,7 @@ public sealed class SignInRecipe
     /// </summary>
     public bool Attended { get; set; }
     /// <summary>
-    /// Sign in in a regular Edge/Chrome window (its own profile) instead of the app's browser, for
+    /// Sign in in a regular Chrome/Edge window (its own profile) instead of the app's browser, for
     /// sites whose bot check refuses automated browsers even with you present. The app connects
     /// to that window once you're signed in and does the rest. Implies attended.
     /// </summary>

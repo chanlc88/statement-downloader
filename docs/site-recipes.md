@@ -119,7 +119,7 @@ quotes'` so backslashes need no escaping.
 | `next` | | Button to click between username and password, for two-page sign-ins. |
 | `signedIn` | yes | Something that exists only when signed in (a Log out link, the account menu). The app also treats a visible password field as "not signed in". |
 | `rememberCookies` | | Names of the cookies that keep you signed in, for the "remembered until" date. Default: all persistent cookies for the site. |
-| `yourBrowser` | | `true` for sites whose bot check refuses automated browsers even with you present ("I am human" boxes that won't accept a tick). The app opens a regular Edge or Chrome window with its own profile; you pass the check and sign in, and the app connects to that window and does the rest. Implies `attended`. |
+| `yourBrowser` | | `true` for sites whose bot check refuses automated browsers even with you present ("I am human" boxes that won't accept a tick). The app opens a regular Chrome window (Edge when Chrome isn't installed) with its own profile; you pass the check and sign in, and the app connects to that window and does the rest. Implies `attended`. |
 | `attended` | | `true` for sites that refuse unattended (background) browsers — they drop the connection or show a bot check every time. The app then never visits the site on its own: when a check is due it asks you to choose **Sign in now**, and does the sign-in and download in a visible window. |
 
 Verification codes, CAPTCHAs, bot checks ("I am human", "Just a moment…") and "is this

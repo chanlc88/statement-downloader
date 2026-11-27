@@ -26,7 +26,7 @@ public sealed class BrowserSession : IAsyncDisposable
     }
 
     /// <summary>
-    /// Opens a regular Edge (or Chrome) window on <paramref name="url"/> with its own profile, for the
+    /// Opens a regular Chrome (or Edge) window on <paramref name="url"/> with its own profile, for the
     /// person to sign in to, and connects to it over the browser's local debugging port. Nothing is
     /// done to hide the connection; the window is simply a normal browser the person uses.
     /// </summary>
@@ -39,10 +39,12 @@ public sealed class BrowserSession : IAsyncDisposable
         if (OpenWindows.TryRemove(profileDir, out var idle)) idle.Cancel();
         if (!await IsListeningAsync(port))
         {
-            var exe = FindBrowser() ?? throw new InvalidOperationException("No Microsoft Edge or Google Chrome was found to open for signing in.");
+            var exe = FindBrowser() ?? throw new InvalidOperationException("No Google Chrome or Microsoft Edge was found to open for signing in.");
             // Its own console output (sync, extension and update chatter) isn't ours to log.
             var psi = new ProcessStartInfo(exe) { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
-            foreach (var arg in new[] { $"--remote-debugging-port={port}", "--remote-debugging-address=127.0.0.1", $"--user-data-dir={profileDir}-browser",
+            // Each browser gets its own profile folder: Chrome and Edge can't share one.
+            var dataDir = profileDir + (Path.GetFileNameWithoutExtension(exe).Contains("chrome", StringComparison.OrdinalIgnoreCase) ? "-chrome" : "-browser");
+            foreach (var arg in new[] { $"--remote-debugging-port={port}", "--remote-debugging-address=127.0.0.1", $"--user-data-dir={dataDir}",
                                         "--no-first-run", "--no-default-browser-check",
                                         // A new profile would otherwise sign in to the browser account and sync
                                         // its extensions, each opening a welcome tab; the sign-in needs neither.
@@ -129,6 +131,7 @@ public sealed class BrowserSession : IAsyncDisposable
                                    or System.Net.WebSockets.WebSocketException or System.Text.Json.JsonException or KeyNotFoundException) { /* already closed */ }
     }
 
+    /// <summary>Google Chrome, or Microsoft Edge when Chrome isn't installed.</summary>
     private static string? FindBrowser()
     {
         string[] candidates;
@@ -136,16 +139,13 @@ public sealed class BrowserSession : IAsyncDisposable
         {
             var roots = new[] { Environment.SpecialFolder.ProgramFilesX86, Environment.SpecialFolder.ProgramFiles, Environment.SpecialFolder.LocalApplicationData }
                 .Select(Environment.GetFolderPath).Where(r => r.Length > 0);
-            candidates = roots.SelectMany(r => new[]
-            {
-                Path.Combine(r, "Microsoft", "Edge", "Application", "msedge.exe"),
-                Path.Combine(r, "Google", "Chrome", "Application", "chrome.exe"),
-            }).ToArray();
+            candidates = [.. roots.Select(r => Path.Combine(r, "Google", "Chrome", "Application", "chrome.exe")),
+                          .. roots.Select(r => Path.Combine(r, "Microsoft", "Edge", "Application", "msedge.exe"))];
         }
         else if (OperatingSystem.IsMacOS())
-            candidates = ["/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"];
+            candidates = ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"];
         else
-            candidates = ["/usr/bin/microsoft-edge", "/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser"];
+            candidates = ["/usr/bin/google-chrome", "/usr/bin/microsoft-edge", "/usr/bin/chromium", "/usr/bin/chromium-browser"];
         return candidates.FirstOrDefault(File.Exists);
     }
 }
