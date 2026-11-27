@@ -11,7 +11,7 @@ notes: >
   browsers ("Access Denied"), so SD opens a regular Chrome window. Once BofA remembers this PC,
   scheduled checks open it by themselves and sign in; if BofA asks for a code or blocks the
   window, SD stops and asks you to choose Sign in now (it fills the login; you enter the code). One login shows every account: Statements & Documents lists the current
-  year's statements for all of them as cards. Set siteOptions.account to the last four digits
+  year's statements for all of them as cards; filling gaps picks older years in its year list. Set siteOptions.account to the last four digits
   shown on the card ("Business Adv Relationship - 1234") — one SD account per BofA account.
   Card statements print the closing date and New Balance Total; bank statements the period
   end and ending balance.
@@ -32,6 +32,16 @@ documents:
   steps:
     - follow: '#nav_accounts_overview_statements_and_documents_id'
     # The Statements panel may open collapsed or remember being open: expand it only if it's closed.
+    - waitFor: 'button.panel-header[aria-controls="stmtsAndDocsSqueezeboxPanel0"][data-initialized="true"]'
+      timeout: 60s
+    - click: 'button.panel-header[aria-controls="stmtsAndDocsSqueezeboxPanel0"][aria-expanded="false"]'
+      timeout: 5s
+      optional: true
+  # The list shows one year (the current one by default). Filling gaps picks each missing year in
+  # the year drop-down; its id isn't confirmed on the live page, hence the fallbacks.
+  years:
+    - select: 'select#yearListSelect, #yearListSelect select, #eccFilters select[id*="year" i], #eccFilters select[name*="year" i]'
+      option: '{year}'
     - waitFor: 'button.panel-header[aria-controls="stmtsAndDocsSqueezeboxPanel0"][data-initialized="true"]'
       timeout: 60s
     - click: 'button.panel-header[aria-controls="stmtsAndDocsSqueezeboxPanel0"][aria-expanded="false"]'

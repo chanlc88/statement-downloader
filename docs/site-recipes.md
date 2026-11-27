@@ -136,7 +136,7 @@ so a failing sign-in can't loop.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `steps` | none | Done in order after signing in to reach the list. Each step is one of `click: <selector>`, `follow: <selector>` (activate a link that's in the page but hidden in a collapsed menu, as the site's own menu would — for in-app links), `goto: <url, may be relative>`, `waitFor: <selector>` (if it doesn't appear, the page is refreshed up to three times and checked again), with optional `frame: <iframe selector>`, `timeout` (default `30s`), `ifOption: <name>` (run only when the account sets that option) and `optional: true` (skip the step when its element doesn't turn up — e.g. click a panel's header only while it's collapsed). |
+| `steps` | none | Done in order after signing in to reach the list. Each step is one of `click: <selector>`, `follow: <selector>` (activate a link that's in the page but hidden in a collapsed menu, as the site's own menu would — for in-app links), `goto: <url, may be relative>`, `waitFor: <selector>` (if it doesn't appear, the page is refreshed up to three times and checked again), `select: <drop-down selector>` with `option: <choice>` (matched against each option's value and text, exactly, then as part of the text), with optional `frame: <iframe selector>`, `timeout` (default `30s`), `ifOption: <name>` (run only when the account sets that option) and `optional: true` (skip the step when its element doesn't turn up — e.g. click a panel's header only while it's collapsed). |
 | `list.rows` | required | One element per document, usually `table tbody tr`. May use `{option}` placeholders, e.g. to keep one account's documents from a list that shows every account. |
 | `list.frame` | | The iframe the list is in. |
 | `list.wait` | `30s` | How long to wait for the first row. |
@@ -148,13 +148,14 @@ so a failing sign-in can't loop.
 | `list.confirm` | | With `download: click`: an element on the page to click after the link, when the link opens a dialog (for example a file-type choice) whose button starts the download. |
 | `list.expand` | | Element in the row to click first when the link is in a details panel the row opens, or is covered until the row is opened. The link selector can reach into the panel with `xpath=following-sibling::tr[1]//a`. |
 | `download` | `fetch` | `fetch`: request the URL with the browser's cookies (fast, works for direct PDF links). `click`: click the link and save the file the browser downloads — the link then needs no URL (script-driven buttons are fine). `popup`: click the link; the site opens the PDF in a new window (often a `blob:` address made by its own script), which is saved and closed. Use it when the site fetches PDFs with its own sign-in token, so a plain `fetch` gets "Unauthorized". |
+| `years` | | For sites whose list shows one year at a time: steps (as in `steps`) that switch it to `{year}`, usually a `select` with `option: '{year}'` and a wait for the list to reload. When filling gaps, they're run for each missing year the first list shows nothing from, newest first, and that year's list is read the same way. A year the drop-down doesn't offer is skipped; a year with no rows is fine. |
 | `firstRunLookback` | `400d` | With nothing on record yet, how far back to download. Later runs only download documents newer than the newest on record; older gaps are filled with **Fill all gaps** on the account page (it downloads whatever the list shows in the missing months). |
 
 A **field** (`date`, `amount`) is either `{ column: N }` — the Nth cell of the row,
 counting from 1 — or `{ selector: <inside the row> }`, plus an optional `pattern` to take
 part of the text: `{ column: 1, pattern: 'Statement (\S+)' }`.
 
-Only rows dated after the newest document on record are downloaded.
+Only rows dated after the newest document on record are downloaded, except when filling gaps, which downloads rows dated in the missing months.
 
 ### `parse`
 

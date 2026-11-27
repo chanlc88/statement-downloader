@@ -102,8 +102,48 @@ public sealed class RecipeSiteFetcher(SiteRecipe recipe) : PlaywrightSiteFetcher
     protected override async Task<DocumentListing> DownloadNewDocumentsAsync(IPage page, IBrowserContext browser, SiteContext ctx, CancellationToken ct)
     {
         var d = recipe.Documents;
-        var options = ctx.Account.SiteOptions;
-        foreach (var (step, i) in d.Steps.Select((s, i) => (s, i + 1)))
+        await RunStepsAsync(page, d.Steps, ctx.Account.SiteOptions, ctx, "Step");
+
+        var known = ctx.Known.Where(k => k.StatementNumber is not null).Select(k => k.StatementNumber!).ToHashSet();
+        var newest = ctx.Known.Count > 0
+            ? ctx.Known.Max(k => k.DocumentDate)
+            : DateOnly.FromDateTime(DateTime.Today - Durations.Parse(d.FirstRunLookback));
+        // Filling gaps: the listed documents dated in the missing ranges; otherwise the ones newer
+        // than the newest on record. Either way, ones already on record are dropped once read below.
+        bool Wanted(DateOnly date) => ctx.Backfill is { } ranges ? ranges.Any(r => r.Contains(date)) : date > newest;
+
+        var found = new List<FoundDocument>();
+        var first = await ReadListAsync(page, browser, ctx, Wanted, known, found, required: true);
+        var oldest = first.Oldest;
+
+        // Sites that list one year at a time: switch to each missing year the first list didn't show.
+        if (ctx.Backfill is { } missing && d.Years is { } yearSteps)
+            foreach (var year in RecipeSelect.YearsToVisit(missing, first.Dates))
+            {
+                var options = new Dictionary<string, string>(ctx.Account.SiteOptions) { [RecipeOptions.Year] = year.ToString() };
+                try { await RunStepsAsync(page, yearSteps, options, ctx, $"Year {year} step"); }
+                catch (OptionNotOfferedException ex)
+                {
+                    ctx.Log.LogInformation("{Site}: the site doesn't offer {Year} ({Detail})", SiteId, year, ex.Message);
+                    continue;
+                }
+                if (ctx.Capture) await SaveDiagnosticsAsync(page, ctx, $"capture-list-{year}");
+                var listed = await ReadListAsync(page, browser, ctx, Wanted, known, found, required: false);
+                ctx.Log.LogInformation("{Site}: {Year} lists {Count} {Kind}(s)", SiteId, year, listed.Dates.Count, recipe.Kind);
+                if (listed.Oldest is { } o && (oldest is null || o < oldest)) oldest = o;
+            }
+
+        if (found.Count == 0)
+        {
+            if (ctx.Backfill is null) ctx.Log.LogInformation("{Site}: nothing newer than {Newest}", SiteId, newest);
+            else ctx.Log.LogInformation("{Site}: none of the missing {Kind}s are listed (oldest listed: {Oldest})", SiteId, recipe.Kind, oldest);
+        }
+        return new(found, oldest);
+    }
+
+    private async Task RunStepsAsync(IPage page, List<StepRecipe> steps, IReadOnlyDictionary<string, string> options, SiteContext ctx, string label)
+    {
+        foreach (var (step, i) in steps.Select((s, i) => (s, i + 1)))
         try
         {
             if (step.IfOption is { } io && (!options.TryGetValue(io, out var v) || string.IsNullOrWhiteSpace(v))) continue;
@@ -113,32 +153,38 @@ public sealed class RecipeSiteFetcher(SiteRecipe recipe) : PlaywrightSiteFetcher
                 Follow = RecipeOptions.Fill(step.Follow, options, ctx.Account.Id),
                 Goto = RecipeOptions.Fill(step.Goto, options, ctx.Account.Id),
                 WaitFor = RecipeOptions.Fill(step.WaitFor, options, ctx.Account.Id),
+                Select = RecipeOptions.Fill(step.Select, options, ctx.Account.Id),
+                Option = RecipeOptions.Fill(step.Option, options, ctx.Account.Id),
                 Frame = RecipeOptions.Fill(step.Frame, options, ctx.Account.Id),
                 Timeout = step.Timeout,
                 Optional = step.Optional,
-            }, i);
+            }, $"{label} {i}");
         }
         catch (InvalidDataException ex) { throw new SiteLayoutException(ex.Message); }
+    }
 
+    private sealed record ListRead(IReadOnlyList<DateOnly> Dates, DateOnly? Oldest);
+
+    /// <summary>
+    /// Reads the list on the page and downloads the wanted documents in it into <paramref name="found"/>.
+    /// With <paramref name="required"/> false, an empty list (a year with no documents) isn't an error.
+    /// </summary>
+    private async Task<ListRead> ReadListAsync(IPage page, IBrowserContext browser, SiteContext ctx, Func<DateOnly, bool> wanted,
+        HashSet<string> known, List<FoundDocument> found, bool required)
+    {
+        var d = recipe.Documents;
         var list = d.List;
         string rowsSelector;
-        try { rowsSelector = RecipeOptions.Fill(list.Rows, options, ctx.Account.Id)!; }
+        try { rowsSelector = RecipeOptions.Fill(list.Rows, ctx.Account.SiteOptions, ctx.Account.Id)!; }
         catch (InvalidDataException ex) { throw new SiteLayoutException(ex.Message); }
         var rows = In(page, list.Frame, rowsSelector);
         try { await rows.First.WaitForAsync(new LocatorWaitForOptions { Timeout = Ms(list.Wait) }); }
+        catch (TimeoutException) when (!required) { return new([], null); }
         catch (TimeoutException) { throw new SiteLayoutException($"The {recipe.Kind} list didn't appear (no '{rowsSelector}' after {list.Wait})."); }
-        if (ctx.Capture) await SaveDiagnosticsAsync(page, ctx, "capture-list");
-
-        var known = ctx.Known.Where(k => k.StatementNumber is not null).Select(k => k.StatementNumber!).ToHashSet();
-        var newest = ctx.Known.Count > 0
-            ? ctx.Known.Max(k => k.DocumentDate)
-            : DateOnly.FromDateTime(DateTime.Today - Durations.Parse(d.FirstRunLookback));
+        if (ctx.Capture && required) await SaveDiagnosticsAsync(page, ctx, "capture-list");
 
         var byClick = d.Download is "click" or "popup";
-        // Filling gaps: the listed documents dated in the missing ranges; otherwise the ones newer
-        // than the newest on record. Either way, ones already on record are dropped once read below.
-        bool Wanted(DateOnly date) => ctx.Backfill is { } ranges ? ranges.Any(r => r.Contains(date)) : date > newest;
-        DateOnly? oldest = null;
+        var dates = new List<DateOnly>();
         var candidates = new List<(ListedDocument Doc, ILocator Row, ILocator LinkElement)>();
         foreach (var row in await rows.AllAsync())
         {
@@ -151,18 +197,13 @@ public sealed class RecipeSiteFetcher(SiteRecipe recipe) : PlaywrightSiteFetcher
                 recipe.Parse.DateFormats,
                 clickToDownload: byClick);
             if (listed is null) continue;
-            if (oldest is null || listed.Date < oldest) oldest = listed.Date;
-            if (Wanted(listed.Date)) candidates.Add((listed, row, linkElement));
+            dates.Add(listed.Date);
+            if (wanted(listed.Date)) candidates.Add((listed, row, linkElement));
         }
-        if (candidates.Count == 0)
-        {
-            if (ctx.Backfill is null) ctx.Log.LogInformation("{Site}: nothing newer than {Newest}", SiteId, newest);
-            else ctx.Log.LogInformation("{Site}: none of the missing {Kind}s are listed (oldest listed: {Oldest})", SiteId, recipe.Kind, oldest);
-            return new([], oldest);
-        }
+        DateOnly? oldest = dates.Count > 0 ? dates.Min() : null;
+        if (candidates.Count == 0) return new(dates, oldest);
 
         var baseUrl = await FrameUrlAsync(page, list.Frame) ?? page.Url;
-        var found = new List<FoundDocument>();
         foreach (var (doc, row, linkElement) in candidates.OrderBy(c => c.Doc.Date))
         {
             var name = $"{doc.Date:yyyy-MM-dd}-{found.Count}.pdf";
@@ -197,10 +238,11 @@ public sealed class RecipeSiteFetcher(SiteRecipe recipe) : PlaywrightSiteFetcher
                 File.Delete(path);
                 continue;
             }
-            if (parsed.StatementNumber is { } sn && known.Contains(sn)) { File.Delete(path); continue; }
+            // Already on record, or already found in an earlier year's list.
+            if (parsed.StatementNumber is { } sn && (known.Contains(sn) || found.Any(f => f.StatementNumber == sn))) { File.Delete(path); continue; }
             // Without a number, the date printed on the document identifies it (the list's date can
             // differ from it, e.g. bill date vs. end of the billing period).
-            if (parsed.StatementNumber is null && ctx.Known.Any(k => k.DocumentDate == parsed.DocumentDate)) { File.Delete(path); continue; }
+            if (parsed.StatementNumber is null && (ctx.Known.Any(k => k.DocumentDate == parsed.DocumentDate) || found.Any(f => f.DocumentDate == parsed.DocumentDate))) { File.Delete(path); continue; }
             found.Add(new FoundDocument
             {
                 TempPath = path,
@@ -210,13 +252,14 @@ public sealed class RecipeSiteFetcher(SiteRecipe recipe) : PlaywrightSiteFetcher
                 VendorAccountNumber = parsed.AccountNumber,
             });
         }
-        return new(found, oldest);
+        return new(dates, oldest);
     }
 
-    private static async Task RunStepAsync(IPage page, StepRecipe step, int number)
+    private static async Task RunStepAsync(IPage page, StepRecipe step, string label)
     {
         var timeout = Ms(step.Timeout);
-        var what = step.Click is { } c ? $"click {c}" : step.Follow is { } f ? $"follow {f}" : step.Goto is { } g ? $"go to {g}" : $"wait for {step.WaitFor}";
+        var what = step.Click is { } c ? $"click {c}" : step.Follow is { } f ? $"follow {f}" : step.Goto is { } g ? $"go to {g}"
+            : step.Select is { } sel ? $"choose '{step.Option}' in {sel}" : $"wait for {step.WaitFor}";
         try
         {
             if (step.Goto is { } url)
@@ -227,6 +270,20 @@ public sealed class RecipeSiteFetcher(SiteRecipe recipe) : PlaywrightSiteFetcher
             else if (step.Click is { } click)
             {
                 await In(page, step.Frame, click).First.ClickAsync(new LocatorClickOptions { Timeout = timeout });
+                await SettleAsync(page);
+            }
+            else if (step.Select is { } select)
+            {
+                var dropDown = In(page, step.Frame, select).First;
+                await dropDown.WaitForAsync(new LocatorWaitForOptions { Timeout = timeout });
+                var options = await dropDown.Locator("option").EvaluateAllAsync<string[][]>("os => os.map(o => [o.value, o.textContent || ''])");
+                var pick = RecipeSelect.Pick(options.Select(o => (o[0], o[1])).ToList(), step.Option!);
+                if (pick is null)
+                {
+                    if (step.Optional) return;
+                    throw new OptionNotOfferedException($"no '{step.Option}' among {string.Join(", ", options.Select(o => o[1].Trim()))}");
+                }
+                await dropDown.SelectOptionAsync(new SelectOptionValue { Value = options[pick.Value][0] }, new LocatorSelectOptionOptions { Timeout = timeout });
                 await SettleAsync(page);
             }
             else if (step.Follow is { } follow)
@@ -255,8 +312,11 @@ public sealed class RecipeSiteFetcher(SiteRecipe recipe) : PlaywrightSiteFetcher
             }
         }
         catch (TimeoutException) when (step.Optional) { }
-        catch (TimeoutException) { throw new SiteLayoutException($"Step {number} ({what}) failed: not found within {step.Timeout}."); }
+        catch (TimeoutException) { throw new SiteLayoutException($"{label} ({what}) failed: not found within {step.Timeout}."); }
     }
+
+    /// <summary>A <c>select</c> step's list doesn't have the choice (e.g. a year the site no longer offers).</summary>
+    private sealed class OptionNotOfferedException(string message) : Exception(message);
 
     private static ILocator In(IPage page, string? frame, string selector) =>
         frame is null ? page.Locator(selector) : page.FrameLocator(frame).Locator(selector);

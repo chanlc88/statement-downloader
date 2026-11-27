@@ -223,6 +223,53 @@ public class RecipeTests
         Assert.True(failures.Count == 0, $"{failures.Count} of {files.Length} not parsed:\n" + string.Join("\n", failures));
     }
 
+    [Fact]
+    public void Bank_of_america_switches_years_when_filling_gaps()
+    {
+        var years = Recipe("bank-of-america").Documents.Years!;
+        var select = years.First(s => s.Select is not null);
+        Assert.Equal("{year}", select.Option);
+    }
+
+    [Fact]
+    public void Year_steps_must_use_the_year_and_only_they_may()
+    {
+        var withYears = MinimalRecipe("yr").Replace("documents:", "documents:\n  years: [ { select: \"#year\", option: \"{year}\" }, { waitFor: \"#list\" } ]");
+        Assert.NotNull(RecipeLoader.Parse(withYears, "x.yaml").Documents.Years);
+
+        var noYear = MinimalRecipe("yr").Replace("documents:", "documents:\n  years: [ { click: \"#next\" } ]");
+        Assert.Contains("{year}", Assert.Throws<InvalidDataException>(() => RecipeLoader.Parse(noYear, "x.yaml")).Message);
+
+        var yearInSteps = MinimalRecipe("yr").Replace("documents:", "documents:\n  steps: [ { click: \"#y-{year}\" } ]");
+        Assert.Contains("documents.years", Assert.Throws<InvalidDataException>(() => RecipeLoader.Parse(yearInSteps, "x.yaml")).Message);
+
+        var selectWithoutOption = MinimalRecipe("yr").Replace("documents:", "documents:\n  steps: [ { select: \"#year\" } ]");
+        Assert.Contains("select needs an option", Assert.Throws<InvalidDataException>(() => RecipeLoader.Parse(selectWithoutOption, "x.yaml")).Message);
+    }
+
+    [Fact]
+    public void Select_picks_by_value_or_text_then_by_a_single_partial_match()
+    {
+        (string, string)[] years = [("0", "2026"), ("1", " 2025 "), ("2", "Year 2022")];
+        Assert.Equal(1, RecipeSelect.Pick(years, "2025"));
+        Assert.Equal(0, RecipeSelect.Pick(years, "0"));
+        Assert.Equal(2, RecipeSelect.Pick(years, "2022"));
+        Assert.Null(RecipeSelect.Pick(years, "2019"));
+        Assert.Null(RecipeSelect.Pick([("a", "Statements 2022"), ("b", "Tax forms 2022")], "2022"));
+    }
+
+    [Fact]
+    public void Years_to_visit_are_the_missing_ones_the_first_list_didnt_show_newest_first()
+    {
+        var missing = new[]
+        {
+            new StatementDownloader.Core.DateRange(new(2022, 1, 1), new(2022, 4, 30)),
+            new StatementDownloader.Core.DateRange(new(2023, 12, 20), new(2024, 1, 10)),
+            new StatementDownloader.Core.DateRange(new(2026, 2, 1), new(2026, 2, 28)),
+        };
+        Assert.Equal([2024, 2023, 2022], RecipeSelect.YearsToVisit(missing, [new DateOnly(2026, 1, 8), new DateOnly(2026, 3, 8)]));
+    }
+
     private static string MinimalRecipe(string id) => $$"""
         id: {{id}}
         name: Minimal {{id}}

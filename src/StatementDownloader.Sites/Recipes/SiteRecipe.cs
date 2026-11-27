@@ -96,6 +96,12 @@ public sealed class DocumentsRecipe
     public string Download { get; set; } = "fetch";
     /// <summary>On the first run (nothing on record), how far back to download.</summary>
     public string FirstRunLookback { get; set; } = "400d";
+    /// <summary>
+    /// For sites that list one year at a time: steps that switch the list to <c>{year}</c>. When
+    /// filling gaps, they're run once for each missing year the first list doesn't show, and that
+    /// year's list is read the same way.
+    /// </summary>
+    public List<StepRecipe>? Years { get; set; }
 }
 
 public sealed class StepRecipe
@@ -108,6 +114,13 @@ public sealed class StepRecipe
     public string? Follow { get; set; }
     public string? Goto { get; set; }
     public string? WaitFor { get; set; }
+    /// <summary>A drop-down list (<c>&lt;select&gt;</c>) to choose <see cref="Option"/> in.</summary>
+    public string? Select { get; set; }
+    /// <summary>
+    /// With <see cref="Select"/>: the choice, matched against each option's value and text (exactly,
+    /// then as part of the text). May use <c>{year}</c> in <see cref="DocumentsRecipe.Years"/>.
+    /// </summary>
+    public string? Option { get; set; }
     /// <summary>Selector of the iframe the step's element is in.</summary>
     public string? Frame { get; set; }
     /// <summary>Only run this step when the account sets this option.</summary>
@@ -215,10 +228,42 @@ public sealed class ExpectedRow
     public string Url { get; set; } = "";
 }
 
+/// <summary>Choosing an option in a drop-down list.</summary>
+public static class RecipeSelect
+{
+    /// <summary>
+    /// The index of the option matching <paramref name="want"/>: by value or text exactly (ignoring
+    /// case and surrounding spaces), else the only one whose text contains it. Null when none does.
+    /// </summary>
+    public static int? Pick(IReadOnlyList<(string Value, string Text)> options, string want)
+    {
+        want = want.Trim();
+        bool Same(string a) => string.Equals(a.Trim(), want, StringComparison.OrdinalIgnoreCase);
+        for (var i = 0; i < options.Count; i++)
+            if (Same(options[i].Value) || Same(options[i].Text)) return i;
+        var partial = Enumerable.Range(0, options.Count).Where(i => options[i].Text.Contains(want, StringComparison.OrdinalIgnoreCase)).ToList();
+        return partial.Count == 1 ? partial[0] : null;
+    }
+
+    /// <summary>
+    /// The years a gap fill should switch the list to: those in the missing ranges that the first
+    /// list showed nothing from, newest first.
+    /// </summary>
+    public static IReadOnlyList<int> YearsToVisit(IEnumerable<Core.DateRange> missing, IEnumerable<DateOnly> listed)
+    {
+        var shown = listed.Select(d => d.Year).ToHashSet();
+        return missing.SelectMany(r => Enumerable.Range(r.From.Year, r.To.Year - r.From.Year + 1))
+            .Distinct().Where(y => !shown.Contains(y)).OrderDescending().ToList();
+    }
+}
+
 /// <summary><c>{name}</c> placeholders in steps and list rows, filled from the account's <c>siteOptions</c>.</summary>
 public static class RecipeOptions
 {
     private static readonly Regex Placeholder = new(@"\{([A-Za-z][A-Za-z0-9]*)\}");
+
+    /// <summary>The year being switched to, in <see cref="DocumentsRecipe.Years"/> steps.</summary>
+    public const string Year = "year";
 
     public static IEnumerable<string> Names(params string?[] texts) =>
         texts.Where(t => t is not null).SelectMany(t => Placeholder.Matches(t!).Select(m => m.Groups[1].Value)).Distinct();
@@ -295,14 +340,13 @@ public static class RecipeLoader
         Need(r.Documents.List.Rows, "documents.list.rows");
         Field(r.Documents.List.Date, "documents.list.date", required: true);
 
-        foreach (var (s, i) in r.Documents.Steps.Select((s, i) => (s, i + 1)))
+        Steps(r.Documents.Steps, "documents.steps", year: false);
+        if (r.Documents.Years is { } years)
         {
-            var actions = new[] { s.Click, s.Follow, s.Goto, s.WaitFor }.Count(x => !string.IsNullOrWhiteSpace(x));
-            if (actions != 1) e.Add($"documents.steps[{i}] needs exactly one of click, follow, goto or waitFor.");
-            Duration(s.Timeout, $"documents.steps[{i}].timeout");
-            if (s.IfOption is { } io && !r.Options.ContainsKey(io)) e.Add($"documents.steps[{i}].ifOption '{io}' isn't listed under options.");
-            foreach (var name in RecipeOptions.Names(s.Click, s.Follow, s.Goto, s.WaitFor, s.Frame))
-                if (!r.Options.ContainsKey(name)) e.Add($"documents.steps[{i}] uses {{{name}}}, which isn't listed under options.");
+            if (years.Count == 0) e.Add("documents.years needs at least one step.");
+            else if (!years.Any(s => RecipeOptions.Names(s.Click, s.Follow, s.Goto, s.WaitFor, s.Select, s.Option).Contains(RecipeOptions.Year)))
+                e.Add("documents.years needs a step that uses {year}, e.g. select: ... with option: '{year}'.");
+            Steps(years, "documents.years", year: true);
         }
         foreach (var name in RecipeOptions.Names(r.Documents.List.Rows))
             if (!r.Options.ContainsKey(name)) e.Add($"documents.list.rows uses {{{name}}}, which isn't listed under options.");
@@ -318,6 +362,21 @@ public static class RecipeLoader
                 if (name == "require") Compiles(p, $"parse.{name}"); else Regex1(p, $"parse.{name}");
         return e;
 
+        void Steps(List<StepRecipe> steps, string where, bool year)
+        {
+            foreach (var (s, i) in steps.Select((s, i) => (s, i + 1)))
+            {
+                var actions = new[] { s.Click, s.Follow, s.Goto, s.WaitFor, s.Select }.Count(x => !string.IsNullOrWhiteSpace(x));
+                if (actions != 1) e.Add($"{where}[{i}] needs exactly one of click, follow, goto, waitFor or select.");
+                if (!string.IsNullOrWhiteSpace(s.Select) && string.IsNullOrWhiteSpace(s.Option)) e.Add($"{where}[{i}] select needs an option.");
+                if (string.IsNullOrWhiteSpace(s.Select) && s.Option is not null) e.Add($"{where}[{i}] option goes with select.");
+                Duration(s.Timeout, $"{where}[{i}].timeout");
+                if (s.IfOption is { } io && !r.Options.ContainsKey(io)) e.Add($"{where}[{i}].ifOption '{io}' isn't listed under options.");
+                foreach (var name in RecipeOptions.Names(s.Click, s.Follow, s.Goto, s.WaitFor, s.Select, s.Option, s.Frame))
+                    if (!r.Options.ContainsKey(name) && !(year && name == RecipeOptions.Year))
+                        e.Add($"{where}[{i}] uses {{{name}}}, which isn't listed under options{(name == RecipeOptions.Year ? " ({year} works only in documents.years)" : "")}.");
+            }
+        }
         void Field(FieldRecipe f, string name, bool required)
         {
             if (f.Column is null && string.IsNullOrWhiteSpace(f.Selector)) { if (required) e.Add($"{name} needs a column or a selector."); }
