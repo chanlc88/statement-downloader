@@ -165,7 +165,8 @@ public sealed class AccountRunner(
             return null;
         }
 
-        var filed = await new DocumentFiler(config.DocumentsRoot).FileAsync(account, found, ct);
+        var filed = await new DocumentFiler(config.DocumentsRoot).FileAsync(account, found, ct,
+            sites.TryGetValue(account.Site, out var site) ? site.Identify : null);
         var existing = (await documents.GetAsync(account.Id, ct)).FirstOrDefault(d => d.Sha256 == filed.Sha256);
         if (existing is not null) return null;
 

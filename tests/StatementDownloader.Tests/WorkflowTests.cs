@@ -97,6 +97,55 @@ public sealed class WorkflowTests : IDisposable
         Assert.Empty(after.Actions);
     }
 
+    [Fact]
+    public async Task History_import_waits_for_a_running_check()
+    {
+        var s = Services(Echo("recorded"));
+        using (new FileStream(s.Paths.File("run.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
+            await Assert.ThrowsAsync<InvalidOperationException>(() => HistoryImport.RunAsync(s, s.Account("water"), lockWait: TimeSpan.Zero));
+        // Once the check is done, the import runs.
+        Assert.Equal((0, 0), await HistoryImport.RunAsync(s, s.Account("water"), lockWait: TimeSpan.Zero));
+    }
+
+    // ---- a re-download of a statement already in the folder
+
+    private (DocumentFiler Filer, AccountConfig Account, string Target, FoundDocument Download) Regenerated(decimal amount)
+    {
+        var account = new AccountConfig { Id = "bank", Folder = "Bank", FileName = "eStmt_{date:yyyy-MM-dd}.pdf" };
+        var target = Path.Combine(_dir, "docs", "Bank", "eStmt_2026-07-10.pdf");
+        Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+        File.WriteAllText(target, "the statement as saved before");
+        var temp = Path.Combine(_dir, "download.pdf");
+        File.WriteAllText(temp, "the same statement, regenerated");
+        return (new DocumentFiler(Path.Combine(_dir, "docs")), account, target,
+            new FoundDocument { TempPath = temp, DocumentDate = new(2026, 7, 10), Amount = amount });
+    }
+
+    private static DocumentIdentity? OnDisk(string _) => new(new(2026, 7, 10), null, 6452.41m);
+
+    [Fact]
+    public async Task Same_statement_already_in_the_folder_is_not_saved_again()
+    {
+        var (filer, account, target, download) = Regenerated(6452.41m);
+        var filed = await filer.FileAsync(account, download, identify: OnDisk);
+        Assert.Equal(FileOutcome.AlreadyOnDisk, filed.Outcome);
+        Assert.Equal(target, filed.Path);
+        Assert.Equal(await DocumentFiler.HashAsync(target), filed.Sha256);
+        Assert.Equal("the statement as saved before", File.ReadAllText(target));
+        Assert.False(File.Exists(download.TempPath));
+        Assert.Single(Directory.GetFiles(Path.GetDirectoryName(target)!));
+    }
+
+    [Fact]
+    public async Task A_different_statement_with_the_same_name_is_kept_beside_it()
+    {
+        var (filer, account, target, download) = Regenerated(99.99m);
+        var filed = await filer.FileAsync(account, download, identify: OnDisk);
+        Assert.Equal(FileOutcome.NameClash, filed.Outcome);
+        Assert.EndsWith("eStmt_2026-07-10 (2).pdf", filed.Path);
+        Assert.Equal("the statement as saved before", File.ReadAllText(target));
+    }
+
     // ---- actions are remembered by identity, not position
 
     [Fact]

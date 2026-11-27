@@ -165,6 +165,16 @@ public sealed class TickRunner(
         await schedule.SaveAsync(state, ct);
     }
 
+    /// <summary>
+    /// Runs <paramref name="work"/> under the run lock, so it never overlaps a check (scheduled,
+    /// Check now, Sign in now, or one in another process).
+    /// </summary>
+    public async Task<T> UnderRunLockAsync<T>(Func<Task<T>> work, TimeSpan wait)
+    {
+        using var runLock = TryLock(wait) ?? throw new InvalidOperationException("A check is running right now; try again in a few minutes.");
+        return await work();
+    }
+
     private FileStream? TryLock(TimeSpan? wait = null)
     {
         Directory.CreateDirectory(paths.DataDir);

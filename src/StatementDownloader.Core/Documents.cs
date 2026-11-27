@@ -148,6 +148,16 @@ public static partial class FileNameTemplate
 
 public enum FileOutcome { Filed, AlreadyOnDisk, NameClash }
 
+/// <summary>What a document says about itself: the date, number and amount printed on it.</summary>
+public sealed record DocumentIdentity(DateOnly DocumentDate, string? StatementNumber, decimal? Amount)
+{
+    /// <summary>The same statement: same date, and the same number and amount where both show one.</summary>
+    public bool SameAs(FoundDocument doc) =>
+        DocumentDate == doc.DocumentDate
+        && (StatementNumber is null || doc.StatementNumber is null || StatementNumber == doc.StatementNumber)
+        && (Amount is null || doc.Amount is null || Amount == doc.Amount);
+}
+
 public sealed record FiledDocument(FileOutcome Outcome, string Path, string Sha256);
 
 /// <summary>Moves a downloaded document into the account's folder.</summary>
@@ -158,7 +168,10 @@ public sealed class DocumentFiler(string documentsRoot)
             FileNameTemplate.Render(account.Folder, account, doc.DocumentDate, doc.StatementNumber),
             FileNameTemplate.Render(account.FileName, account, doc.DocumentDate, doc.StatementNumber));
 
-    public async Task<FiledDocument> FileAsync(AccountConfig account, FoundDocument doc, CancellationToken ct = default)
+    /// <param name="identify">Reads a document on disk (its date, number and amount), so a file that
+    /// already has the name and is the same statement (e.g. one the site regenerated, which differs
+    /// by a few bytes) counts as already on disk instead of a clash.</param>
+    public async Task<FiledDocument> FileAsync(AccountConfig account, FoundDocument doc, CancellationToken ct = default, Func<string, DocumentIdentity?>? identify = null)
     {
         var target = TargetPath(account, doc);
         Directory.CreateDirectory(System.IO.Path.GetDirectoryName(target)!);
@@ -170,6 +183,11 @@ public sealed class DocumentFiler(string documentsRoot)
             {
                 File.Delete(doc.TempPath);
                 return new(FileOutcome.AlreadyOnDisk, target, hash);
+            }
+            if (identify?.Invoke(target) is { } onDisk && onDisk.SameAs(doc))
+            {
+                File.Delete(doc.TempPath);
+                return new(FileOutcome.AlreadyOnDisk, target, await HashAsync(target, ct));
             }
             var stem = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(target)!, System.IO.Path.GetFileNameWithoutExtension(target));
             var ext = System.IO.Path.GetExtension(target);

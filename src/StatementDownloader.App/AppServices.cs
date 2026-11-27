@@ -80,7 +80,15 @@ public sealed class AppServices : IDisposable
 /// <summary>Seeds document history from PDFs already in an account's folder.</summary>
 public static class HistoryImport
 {
-    public static async Task<(int Added, int Skipped)> RunAsync(AppServices s, AccountConfig account, CancellationToken ct = default)
+    /// <summary>
+    /// Records the account's files already on disk. Waits for any running check first (up to
+    /// <paramref name="lockWait"/>, default 15 minutes): a check comparing against a half-imported
+    /// history would download statements the import is about to record.
+    /// </summary>
+    public static Task<(int Added, int Skipped)> RunAsync(AppServices s, AccountConfig account, CancellationToken ct = default, TimeSpan? lockWait = null) =>
+        s.Ticks.UnderRunLockAsync(() => ImportAsync(s, account, ct), lockWait ?? TimeSpan.FromMinutes(15));
+
+    private static async Task<(int Added, int Skipped)> ImportAsync(AppServices s, AccountConfig account, CancellationToken ct)
     {
         var existing = await s.Documents.GetAsync(account.Id, ct);
         var parser = s.Sites.GetValueOrDefault(account.Site) is IHasDocumentParser p ? p.Parser : null;

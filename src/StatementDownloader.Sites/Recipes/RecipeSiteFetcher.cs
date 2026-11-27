@@ -18,6 +18,12 @@ public sealed class RecipeSiteFetcher(SiteRecipe recipe) : PlaywrightSiteFetcher
     protected override bool Unattended => recipe.SignIn.Unattended;
     public override bool EmailsCode => recipe.SignIn.EmailCode is not null;
 
+    public override DocumentIdentity? Identify(string path)
+    {
+        try { return Parser.Parse(PdfText.Extract(path)) is { } p ? new(p.DocumentDate, p.StatementNumber, p.Amount) : null; }
+        catch (Exception) { return null; } // not a readable PDF: treat it as a different file
+    }
+
     private SignInRecipe S => recipe.SignIn;
 
     protected override async Task<bool> IsSignedInAsync(IPage page, CancellationToken ct) =>
