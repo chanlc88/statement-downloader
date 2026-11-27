@@ -24,10 +24,12 @@ public class RecipeTests
 
     private static SiteRecipe Recipe(string id) => RecipeLoader.BuiltIn().Single(r => r.Id == id);
 
-    [Fact]
-    public void Republic_signs_in_by_itself_in_a_browser_window()
+    [Theory]
+    [InlineData("republic-services")]
+    [InlineData("georgia-power")]
+    public void Signs_in_by_itself_in_a_browser_window(string id)
     {
-        var site = new StatementDownloader.Sites.Recipes.RecipeSiteFetcher(Recipe("republic-services"));
+        var site = new StatementDownloader.Sites.Recipes.RecipeSiteFetcher(Recipe(id));
         Assert.False(site.NeedsPerson);
         Assert.True(site.OpensWindow);
     }

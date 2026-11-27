@@ -9,7 +9,8 @@ verified: 2026-11-20
 notes: >
   Sign-in is behind an Imperva bot check ("I am human" hCaptcha) that refuses automated
   browsers even with you present, so this recipe uses yourBrowser: SD opens a regular Chrome or
-  Edge window, you pass the check and sign in, and SD takes over from there. One login can
+  Edge window. Scheduled checks open it by themselves and sign in once; if the check doesn't
+  pass on its own, SD stops and asks you to choose Sign in now (you pass the check and sign in). One login can
   hold several accounts: set siteOptions.account to the account number as the site shows it
   (12345-67890) — one SD account per Georgia Power account. History lists bills and payments;
   each bill's PDF icon ("View Paper Bill") opens the PDF in a new window. Bills are dated here by the end of the
@@ -26,6 +27,7 @@ signIn:
   submit: "button[aria-label='Log In']"
   signedIn: 'a:text-is("Logout")'
   yourBrowser: true
+  unattended: true
 
 documents:
   steps:
