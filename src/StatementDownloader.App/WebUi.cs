@@ -109,6 +109,20 @@ public static class WebUi
             return Results.File(path, type, enableRangeProcessing: true);
         });
 
+        // Which accounts wait for review, and the latest decisions, for the Review page.
+        api.MapGet("/review/recent", async (AppServices s, CancellationToken ct) =>
+        {
+            var names = s.Config.Accounts.ToDictionary(a => a.Id, a => a.DisplayName);
+            return Results.Ok(new
+            {
+                accounts = s.Config.Accounts.Where(a => a.Review && a.Actions.Count > 0).Select(a => a.DisplayName),
+                decided = (await s.Documents.GetAsync(null, ct)).Where(d => d.Review is ReviewState.Approved or ReviewState.Rejected)
+                    .OrderByDescending(d => d.Actions.Select(x => (DateTimeOffset?)x.LastAttemptUtc).Max() ?? d.FirstSeenUtc)
+                    .Take(10)
+                    .Select(d => new { d.Id, account = names.GetValueOrDefault(d.AccountId, d.AccountId), date = d.DocumentDate, d.Amount, review = d.Review, actions = d.Actions.Select(x => new { x.Succeeded, x.Summary }) }),
+            });
+        });
+
         // State-changing endpoints need the per-install key (blocks cross-site requests).
         var write = api.MapGroup("").AddEndpointFilter(async (ctx, next) =>
             ctx.HttpContext.Request.Headers["X-SD-Key"] == services.UiKey ? await next(ctx) : Results.StatusCode(403));
@@ -164,7 +178,8 @@ public static class WebUi
 
         api.MapGet("/settings/preview", async (string account, string? folder, string? fileName, string? root, AppServices s, CancellationToken ct) =>
         {
-            var a = s.Account(account);
+            // A new account (not saved yet) has no entry: preview it under the id it will get.
+            var a = s.Config.Accounts.FirstOrDefault(x => x.Id == account) ?? new AccountConfig { Id = string.IsNullOrWhiteSpace(account) ? "new-account" : account };
             folder ??= a.Folder; fileName ??= a.FileName; root = string.IsNullOrWhiteSpace(root) ? s.Config.DocumentsRoot : ConfigLoader.ExpandHome(root.Trim());
             var problem = AccountLocation.FolderProblem(folder) ?? AccountLocation.FileNameProblem(fileName);
             if (problem is not null) return Results.Ok(new { problem });
@@ -188,6 +203,71 @@ public static class WebUi
                 return Results.Ok(new { folders });
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return Results.Ok(new { folders = Array.Empty<string>() }); }
+        });
+
+        // The sites accounts can be added for, with what each needs.
+        api.MapGet("/sites", (AppServices s) => Results.Ok(s.Sites.Values
+            .Select(x => (x as StatementDownloader.Sites.Recipes.RecipeSiteFetcher)?.Recipe)
+            .OfType<StatementDownloader.Sites.Recipes.SiteRecipe>()
+            .OrderBy(r => r.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(r => new { r.Id, r.Name, r.Kind, r.Website, r.Notes, options = r.Options, signIn = r.SignIn.YourBrowser || r.SignIn.Attended ? "window" : "background" })));
+
+        // Adds an account to config.yaml, checks its login can be read, and imports the documents
+        // already in its folder. The first sign-in is left to the person (Sign in now).
+        write.MapPost("/settings/accounts", async (NewAccount n, AppServices s, CancellationToken ct) =>
+        {
+            await SettingsLock.WaitAsync(ct);
+            AccountConfig added;
+            try
+            {
+                if (string.IsNullOrWhiteSpace(n.Name)) return Results.BadRequest(new { error = "Give the account a name." });
+                if (s.Sites.GetValueOrDefault(n.Site ?? "") is not StatementDownloader.Sites.Recipes.RecipeSiteFetcher site) return Results.BadRequest(new { error = "Choose a site." });
+                var credential = (n.Credential ?? "").Trim();
+                if (credential.Length == 0) return Results.BadRequest(new { error = "Enter the login: a Bitwarden secret id, or a reference such as keychain:name." });
+                if (Guid.TryParse(credential, out _)) credential = "bitwarden:" + credential;
+                var folder = (n.Folder ?? "").Trim().Replace('\\', '/').Trim('/');
+                var fileName = (n.FileName ?? "").Trim();
+                if ((AccountLocation.FolderProblem(folder) ?? AccountLocation.FileNameProblem(fileName)) is { } problem) return Results.BadRequest(new { error = problem });
+                try { await s.Secrets.GetCredentialAsync(credential, ct); }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    return Results.BadRequest(new { error = $"Couldn't read that login: {ex.Message}" });
+                }
+
+                var slug = System.Text.RegularExpressions.Regex.Replace(n.Name.Trim().ToLowerInvariant(), "[^a-z0-9]+", "-").Trim('-');
+                if (slug.Length == 0) slug = site.SiteId;
+                var id = slug;
+                for (var i = 2; s.Config.Accounts.Any(a => a.Id == id); i++) id = $"{slug}-{i}";
+
+                var options = (n.Options ?? []).Where(kv => site.Recipe.Options.ContainsKey(kv.Key) && !string.IsNullOrWhiteSpace(kv.Value))
+                    .ToDictionary(kv => kv.Key, kv => kv.Value.Trim());
+                var tags = ConfigEditor.NormalizeTags(n.Tags ?? []);
+                var q = ConfigEditor.QuoteValue;
+                var entries = new List<(string, string)> { ("id", id), ("name", q(n.Name.Trim())) };
+                if (!string.IsNullOrWhiteSpace(n.Group)) entries.Add(("group", q(n.Group.Trim())));
+                if (tags.Count > 0) entries.Add(("tags", "[" + string.Join(", ", tags.Select(q)) + "]"));
+                entries.Add(("site", site.SiteId));
+                entries.Add(("kind", site.Recipe.Kind));
+                if (options.Count > 0) entries.Add(("siteOptions", "{ " + string.Join(", ", options.Select(kv => $"{kv.Key}: {q(kv.Value)}")) + " }"));
+                entries.Add(("credential", credential));
+                entries.Add(("folder", q(folder)));
+                entries.Add(("fileName", q(fileName)));
+                entries.Add(("schedule", "auto"));
+
+                var path = s.Paths.ConfigFile;
+                var yaml = ConfigEditor.AddAccount(await File.ReadAllTextAsync(path, ct), entries);
+                AppConfig saved;
+                try { saved = ConfigEditor.Check(yaml); }
+                catch (Exception ex) when (ex is InvalidDataException or YamlDotNet.Core.YamlException) { return Results.BadRequest(new { error = ex.Message }); }
+                ConfigEditor.Save(path, yaml);
+                added = saved.Accounts.Single(a => a.Id == id);
+                // A new list rather than Add: a check may be going through the old one.
+                s.Config.Accounts = [.. s.Config.Accounts, added];
+            }
+            finally { SettingsLock.Release(); }
+
+            var (imported, _) = await HistoryImport.RunAsync(s, added, ct);
+            return Results.Ok(new { id = added.Id, imported });
         });
 
         write.MapPost("/settings", async (SettingsChange change, AppServices s, CancellationToken ct) =>
@@ -237,6 +317,7 @@ public static class WebUi
     private static readonly SemaphoreSlim SettingsLock = new(1, 1);
 
     public sealed record SettingsChange(string? DocumentsRoot, List<AccountLocationChange>? Accounts);
+    public sealed record NewAccount(string? Name, string? Site, string? Group, List<string>? Tags, Dictionary<string, string>? Options, string? Credential, string? Folder, string? FileName);
     public sealed record AccountLocationChange(string Id, string? Folder, string? FileName, string? Group = null, List<string>? Tags = null);
 
     private static async Task<object> SettingsView(AppServices s, CancellationToken ct)

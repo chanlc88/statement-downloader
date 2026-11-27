@@ -211,4 +211,25 @@ public class AccountLocationTests
         Assert.Throws<InvalidDataException>(() => AccountLocation.Resolve(root + "-sibling", "..", Path.Combine("sd-root", "a.pdf")));
         Assert.Throws<InvalidDataException>(() => AccountLocation.Resolve(root, Path.GetTempPath(), "a.pdf"));
     }
+
+    [Fact]
+    public void Adds_an_account_at_the_end_of_the_list_in_its_indentation()
+    {
+        const string yaml = "documentsRoot: \"~/Docs\"\naccounts:\n    - id: water\n      site: dekalb-water\n      credential: env:X\n      folder: Bills\n      fileName: \"{date:yyyy-MM-dd}.pdf\"\n\n# Where to send notices\nnotifications:\n  quietHours: \"22:00-07:00\"\n";
+        var result = ConfigEditor.AddAccount(yaml, [("id", "gas"), ("name", "\"Gas Co\""), ("site", "scana-energy"), ("credential", "env:Y"), ("folder", "\"Gas\""), ("fileName", "\"{date:yyyy-MM-dd}.pdf\"")]);
+        Assert.Contains("      fileName: \"{date:yyyy-MM-dd}.pdf\"\n\n    - id: gas\n      name: \"Gas Co\"\n", result);
+        // The comment and the next section stay after the list.
+        Assert.Contains("      fileName: \"{date:yyyy-MM-dd}.pdf\"\n\n# Where to send notices\nnotifications:", result);
+        var config = ConfigEditor.Check(result);
+        Assert.Equal(["water", "gas"], config.Accounts.Select(a => a.Id));
+        Assert.Equal("Gas Co", config.Accounts[1].Name);
+    }
+
+    [Fact]
+    public void Adds_the_first_account()
+    {
+        var result = ConfigEditor.AddAccount("documentsRoot: \"~/Docs\"\naccounts: []\n", [("id", "gas"), ("site", "scana-energy"), ("credential", "env:Y"), ("folder", "\"Gas\""), ("fileName", "\"{date:yyyy-MM-dd}.pdf\"")]);
+        Assert.Equal("gas", Assert.Single(ConfigEditor.Check(result).Accounts).Id);
+        Assert.Contains("accounts:\n  - id: gas\n    site: scana-energy\n", result);
+    }
 }

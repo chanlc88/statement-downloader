@@ -109,6 +109,49 @@ public static class ConfigEditor
         return string.Join(nl, lines);
     }
 
+    /// <summary>
+    /// Adds an account at the end of the <c>accounts:</c> list, in the list's own indentation.
+    /// <paramref name="entries"/> are key and raw YAML value pairs; the first one starts the entry
+    /// (it should be <c>id</c>, so the other edits can find the account).
+    /// </summary>
+    public static string AddAccount(string yaml, IReadOnlyList<(string Key, string RawValue)> entries)
+    {
+        if (entries.Count == 0 || entries[0].Key != "id") throw new ArgumentException("The first entry must be the id.", nameof(entries));
+        var lines = Split(yaml, out var nl);
+        var at = lines.FindIndex(l => Regex.IsMatch(l, @"^accounts\s*:\s*(\[\s*\])?\s*(#.*)?$"));
+        if (at < 0)
+        {
+            while (lines.Count > 0 && lines[^1].Trim().Length == 0) lines.RemoveAt(lines.Count - 1);
+            lines.Add("");
+            lines.Add("accounts:");
+            at = lines.Count - 1;
+        }
+        else lines[at] = Regex.Replace(lines[at], @"\s*\[\s*\]", "");
+
+        // The list runs to the next top-level key; comments just before that key belong to it.
+        var end = at + 1;
+        while (end < lines.Count)
+        {
+            var l = lines[end];
+            if (l.Length > 0 && !char.IsWhiteSpace(l[0]) && !l.StartsWith('#') && !l.StartsWith("- ")) break;
+            end++;
+        }
+        var insert = end;
+        while (insert > at + 1 && (lines[insert - 1].Trim().Length == 0 || lines[insert - 1].StartsWith('#'))) insert--;
+
+        var first = lines.Skip(at + 1).Take(end - at - 1).Select(l => Regex.Match(l, @"^(\s*)-\s+\S")).FirstOrDefault(m => m.Success);
+        var dash = first?.Groups[1].Value ?? "  ";
+        var block = new List<string>();
+        if (insert > at + 1) block.Add("");
+        block.Add($"{dash}- {entries[0].Key}: {entries[0].RawValue}");
+        block.AddRange(entries.Skip(1).Select(e => $"{dash}  {e.Key}: {e.RawValue}"));
+        lines.InsertRange(insert, block);
+        return string.Join(nl, lines);
+    }
+
+    /// <summary>A YAML double-quoted string.</summary>
+    public static string QuoteValue(string value) => Quote(value);
+
     /// <summary>Checks the edited text parses and validates; returns the parsed config.</summary>
     public static AppConfig Check(string yaml) => ConfigLoader.Parse(yaml);
 

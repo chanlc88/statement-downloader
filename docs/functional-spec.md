@@ -316,7 +316,14 @@ A local web UI at `http://localhost:5187` (localhost only):
   (*Open* shows the PDF), and the one action it needs now — *Sign in*, *Review* or
   *Check now*. Everything else (*Sign in now*, open the latest document, show it in its
   folder, details) is in the row's ⋯ menu.
-- **Review** — documents waiting for approval, each with *Open PDF*.
+- **Review** — documents waiting for approval, each with *Open PDF*; when nothing is waiting,
+  which accounts wait for review and why; and the latest decisions with what ran.
+- **Settings** — the base folder, and each account's group, tags, folder and file name (with a
+  live preview, token buttons that insert at the cursor, and Save / Cancel that stay on screen).
+  **Add account** adds one from a form: the site (its options appear), a name, the login (a
+  Bitwarden secret id, or a reference such as `keychain:name`), group, tags, folder and file
+  name. The app checks that the login can be read, adds the account to `config.yaml`, and
+  records the documents already in its folder; the first sign-in is then *Sign in now*.
 - **Issues** — *Needs you* (each issue with a short reason, the button that fixes its cause
   — *Sign in*, *Check now*, *Open PDF* — and any automation log collapsed under *Technical
   details*), *Worth knowing* (heads-ups), and *Activity*: every notification, including ones

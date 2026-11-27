@@ -79,6 +79,14 @@
   .lrow.saved { animation: flash 1.6s ease-out; }
   @keyframes flash { from { background: color-mix(in srgb, var(--ok) 22%, transparent); } to { background: transparent; } }
   .rowbtns { display: flex; gap: 8px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
+  /* While editing, Save and Cancel stay on screen however long the form is. */
+  .lrow.editing .rowbtns { position: sticky; bottom: 0; z-index: 2; margin: 12px -14px -10px; padding: 10px 14px; background: var(--chip); border-top: 1px solid var(--line); }
+  .tokens { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; align-items: center; }
+  .tokens button { font: 12px ui-monospace, SFMono-Regular, Consolas, monospace; padding: 1px 7px; border-radius: 6px; }
+  .tokens .muted { font-size: 12.5px; margin-right: 2px; }
+  select { font: inherit; width: 100%; padding: 7px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--text); }
+  #newAcct .site-notes { font-size: 13px; color: var(--muted); margin-top: 6px; }
+  #newAcct .full { grid-column: 1 / -1; }
   .rowbtns button { white-space: nowrap; }
   @media (max-width: 700px) { .lrow.editing .fields { grid-template-columns: 1fr; } }
 
@@ -445,12 +453,21 @@ async function renderAccount(id, assist) {
 }
 
 async function renderReview() {
-  const items = await api("/review");
-  if (!items.length) return `<div class="empty">Nothing waiting for review.</div>`;
-  return `<table><tr><th>Account</th><th>Date</th><th>Amount</th><th>Statement #</th><th>Will run</th><th></th></tr>
+  const [items, recent] = await Promise.all([api("/review"), api("/review/recent")]);
+  const waiting = items.length ? `<table><tr><th>Account</th><th>Date</th><th>Amount</th><th>Statement #</th><th>Will run</th><th></th></tr>
     ${items.map(x => `<tr><td>${esc(x.account)}</td><td>${day(x.date)}</td><td>${money(x.amount)}</td><td>${esc(x.statementNumber || "–")}</td>
       <td>${esc((x.actions || []).join(", "))}</td>
-      <td style="white-space:nowrap"><button onclick="openDoc('${x.id}')">Open PDF</button> <button class="primary" onclick="review('${x.id}','approve',this)">Approve</button> <button onclick="review('${x.id}','reject',this)">Reject</button></td></tr>`).join("")}</table>`;
+      <td style="white-space:nowrap"><button onclick="openDoc('${x.id}')">Open PDF</button> <button class="primary" onclick="review('${x.id}','approve',this)">Approve</button> <button onclick="review('${x.id}','reject',this)">Reject</button></td></tr>`).join("")}</table>`
+    : `<div class="empty" style="text-align:left">Nothing is waiting for review.
+      <p style="margin:8px 0 0">${recent.accounts.length
+        ? `New documents from <b>${esc(recent.accounts.join(", "))}</b> stop here before SD runs their actions (such as recording an expense). Open the PDF, check it, then approve or reject.`
+        : `No account waits for review. An account with <code>review: true</code> and actions in the config stops each new document here before running them.`}</p></div>`;
+  const decided = recent.decided.length ? `<h3>Recent decisions</h3><table><tr><th>Account</th><th>Date</th><th>Amount</th><th>Decision</th><th>What ran</th><th></th></tr>
+    ${recent.decided.map(x => `<tr><td>${esc(x.account)}</td><td>${day(x.date)}</td><td>${money(x.amount)}</td>
+      <td class="${x.review === "approved" ? "s-healthy" : "muted"}">${x.review === "approved" ? "Approved" : "Rejected"}</td>
+      <td>${(x.actions || []).map(r => `<div class="${r.succeeded ? "" : "s-broken"}">${esc(r.summary || "")}</div>`).join("") || '<span class="muted">–</span>'}</td>
+      <td><button class="linkbtn" onclick="openDoc('${x.id}')">Open</button></td></tr>`).join("")}</table>` : "";
+  return (items.length ? `<h3 style="margin-top:0">Waiting for you</h3>` : "") + waiting + decided;
 }
 
 async function renderIssues() {
@@ -477,6 +494,21 @@ async function renderIssues() {
     <div class="actions"><button onclick="testNotify(this)">Send test notification</button>${d.recent.length ? `<button onclick="clearHistory(this)">Clear sent history</button>` : ""}</div>`;
 }
 
+const TOKENS = [["{date:yyyy-MM-dd}", "document date"], ["{year}", "year"], ["{month}", "month (01–12)"], ["{statement}", "statement or invoice number"], ["{account}", "account id"], ["{kind}", "bill, invoice or statement"]];
+let tokenTarget = "f-file";
+const tokenButtons = () => `<div class="tokens"><span class="muted">Insert:</span>${TOKENS.map(([t, what]) =>
+  `<button type="button" onmousedown="event.preventDefault()" onclick="insertToken('${t}')" title="${esc(what)}">${esc(t)}</button>`).join("")}</div>`;
+/** Puts a token where the cursor is in the folder or file name field last used (default: file name). */
+function insertToken(t) {
+  const input = $("#" + tokenTarget) || $("#f-file");
+  if (!input) return;
+  const at = input.selectionStart ?? input.value.length, to = input.selectionEnd ?? at;
+  input.value = input.value.slice(0, at) + t + input.value.slice(to);
+  input.focus(); input.setSelectionRange(at + t.length, at + t.length);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+document.addEventListener("focusin", e => { if (e.target.id === "f-folder" || e.target.id === "f-file") tokenTarget = e.target.id; });
+
 const TOKENS_HELP = `Tokens: <code>{year}</code> <code>{month}</code> <code>{date:yyyy-MM-dd}</code> <code>{statement}</code> (statement or invoice number) <code>{account}</code> <code>{kind}</code>. Use <code>/</code> between folder levels.`;
 let settingsData = null, editingId = null, editingRoot = false, settingsFilter = "";
 
@@ -488,7 +520,9 @@ async function renderSettings() {
     <div class="toolbar">
       <input type="search" id="acctFilter" placeholder="Filter by account, group, tag, site or folder" value="${esc(settingsFilter)}" aria-label="Filter accounts">
       <span class="muted" id="acctCount"></span>
+      <button class="primary" style="margin-left:auto" onclick="addAccount()">Add account</button>
     </div>
+    <div id="newAcct"></div>
     <div class="list" id="acctList">${listHtml()}</div>
     <datalist id="folderSuggest"></datalist>
     <datalist id="groupSuggest">${(d.groups || []).map(g => `<option value="${esc(g)}">`).join("")}</datalist>
@@ -538,10 +572,78 @@ function editorHtml(a) {
         <input type="text" id="f-folder" data-field="folder" list="folderSuggest" value="${esc(a.folder)}" data-original="${esc(a.folder)}" spellcheck="false" autocomplete="off"></div>
       <div><label for="f-file">File name</label>
         <input type="text" id="f-file" data-field="fileName" value="${esc(a.fileName)}" data-original="${esc(a.fileName)}" spellcheck="false"></div>
+      <div class="full" style="grid-column:1/-1">${tokenButtons()}</div>
     </div>
     <div class="preview" data-preview title="${esc(a.example)}">${esc(a.relative)}</div>
     <div class="rowbtns"><button class="primary" onclick="saveAccount(this)">Save</button><button onclick="cancelEdit()">Cancel</button>
       <span class="muted">Example: where the latest document on record would be saved.</span><span class="msg"></span></div>`;
+}
+
+const NEW = "__new";
+let sites = null;
+
+async function addAccount() {
+  if (!confirmDiscard()) return;
+  closeEditors();
+  sites ??= await api("/sites");
+  editingId = NEW;
+  $("#newAcct").innerHTML = `<div class="list" style="margin-bottom:14px"><div class="lrow editing">${newAccountHtml()}</div></div>`;
+  $("#n-site").focus();
+}
+
+function newAccountHtml() {
+  return `<b>New account</b>
+    <div class="fields">
+      <div><label for="n-site">Site</label>
+        <select id="n-site" onchange="siteChosen()"><option value="">Choose…</option>${sites.map(x => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join("")}</select></div>
+      <div><label for="n-name">Name <span class="muted" style="font-weight:400">— as you want to see it</span></label>
+        <input type="text" id="n-name" data-original="" placeholder="e.g. BofA Personal Checking (1234)" autocomplete="off"></div>
+      <div class="full site-notes" id="n-notes"></div>
+      <div id="n-options" class="full"></div>
+      <div class="full"><label for="n-cred">Login <span class="muted" style="font-weight:400">— the Bitwarden secret id that holds the username and password (or a reference such as keychain:name)</span></label>
+        <input type="text" id="n-cred" data-original="" spellcheck="false" autocomplete="off" placeholder="e.g. 0f8fad5b-d9cb-469f-a165-70867728950e"></div>
+      <div><label for="f-group">Group <span class="muted" style="font-weight:400">— the section it's listed under</span></label>
+        <input type="text" id="f-group" list="groupSuggest" data-original="" autocomplete="off"></div>
+      <div><label for="f-tags">Tags <span class="muted" style="font-weight:400">— comma-separated</span></label>
+        <input type="text" id="f-tags" data-original="" autocomplete="off" placeholder="e.g. bank">${tagPicker([])}</div>
+      <div><label for="f-folder">Folder <span class="muted" style="font-weight:400">— inside the base folder</span></label>
+        <input type="text" id="f-folder" list="folderSuggest" data-original="" spellcheck="false" autocomplete="off" placeholder="e.g. BANKING/My Bank/{year}"></div>
+      <div><label for="f-file">File name</label>
+        <input type="text" id="f-file" data-original="" spellcheck="false" value="{date:yyyy-MM-dd}-{account}.pdf"></div>
+      <div class="full">${tokenButtons()}</div>
+    </div>
+    <div class="preview" data-preview>Choose a folder to see where documents will be saved.</div>
+    <p class="hint">SD checks the login can be read, adds the account, and records the documents already in its folder so they aren't downloaded again.
+      Then sign in once from the account's page.</p>
+    <div class="rowbtns"><button class="primary" onclick="saveNewAccount(this)">Add account</button><button onclick="cancelEdit()">Cancel</button><span class="msg"></span></div>`;
+}
+
+/** Shows what the chosen site needs: its notes, and a field per option. */
+function siteChosen() {
+  const site = sites.find(x => x.id === $("#n-site").value);
+  $("#n-notes").innerHTML = site ? `${esc(site.kind[0].toUpperCase() + site.kind.slice(1))}s from ${esc(site.website || site.name)}.
+    ${site.signIn === "window" ? "Signs in through a browser window that SD opens." : "Signs in in the background."} ${site.notes ? `<details class="tech"><summary>About this site</summary><div style="margin-top:4px">${esc(site.notes)}</div></details>` : ""}` : "";
+  $("#n-options").innerHTML = site && Object.keys(site.options || {}).length ? `<div class="fields">${Object.entries(site.options).map(([k, what]) =>
+    `<div><label for="n-opt-${esc(k)}">${esc(k[0].toUpperCase() + k.slice(1))}</label><input type="text" id="n-opt-${esc(k)}" data-option="${esc(k)}" data-original="" autocomplete="off"><div class="hint">${esc(what)}</div></div>`).join("")}</div>` : "";
+}
+
+async function saveNewAccount(btn) {
+  const row = $("#newAcct .lrow");
+  const options = Object.fromEntries([...document.querySelectorAll("#n-options [data-option]")].map(i => [i.dataset.option, i.value]));
+  const body = { name: $("#n-name").value, site: $("#n-site").value, group: $("#f-group").value, tags: $("#f-tags").value.split(",").map(t => t.trim()).filter(Boolean),
+    options, credential: $("#n-cred").value, folder: $("#f-folder").value, fileName: $("#f-file").value };
+  let error = null;
+  const r = await working(btn, "Adding…", async () => {
+    try { return await api("/settings/accounts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); }
+    catch (e) { error = errorText(e); return null; }
+  });
+  if (error || !r) return setMsg(row, `<span class="s-broken">${esc(error || "Couldn't add the account.")}</span>`);
+  document.querySelectorAll("#newAcct input").forEach(i => i.dataset.original = i.value);   // nothing unsaved now
+  editingId = null;
+  sites = null;
+  alert(`Added. ${r.imported ? `${r.imported} document(s) already in its folder were recorded.` : "No documents were in its folder yet."}\n\nNext: choose Sign in now on its page for the first sign-in.`);
+  history.pushState(null, "", `/accounts/${encodeURIComponent(r.id)}?assist`);
+  render();
 }
 
 function tagPicker(current) {
@@ -563,12 +665,13 @@ function settingsDirty() {
 function confirmDiscard() { return !settingsDirty() || confirm("Discard your unsaved changes?"); }
 
 function closeEditors() {
-  if (editingId) {
+  if (editingId && editingId !== NEW) {
     const row = document.querySelector(`[data-account="${CSS.escape(editingId)}"]`);
     const a = settingsData.accounts.find(x => x.id === editingId);
     if (row && a) { row.classList.remove("editing"); row.innerHTML = rowHtml(a); }
   }
   if (editingRoot) { editingRoot = false; $("#rootCard").innerHTML = rootHtml(); }
+  if (editingId === NEW) $("#newAcct").innerHTML = "";
   editingId = null;
 }
 
@@ -654,7 +757,9 @@ function onSettingsInput(e) {
   previewTimer = setTimeout(async () => {
     const box = document.querySelector(".lrow.editing [data-preview]");
     if (!box) return;
-    const q = new URLSearchParams({ account: editingId, folder: $("#f-folder").value, fileName: $("#f-file").value });
+    if (editingId === NEW && !$("#f-folder").value.trim()) return;
+    const newId = $("#n-name")?.value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "new-account";
+    const q = new URLSearchParams({ account: editingId === NEW ? newId : editingId, folder: $("#f-folder").value, fileName: $("#f-file").value });
     try {
       const r = await api("/settings/preview?" + q);
       box.classList.toggle("bad", !!r.problem);
@@ -683,7 +788,7 @@ document.addEventListener("input", e => { if (e.target.closest("main") && locati
 document.addEventListener("keydown", e => {
   if (location.pathname !== "/settings") return;
   if (e.key === "Escape" && (editingId || editingRoot)) cancelEdit();
-  if (e.key === "Enter" && e.target.matches(".lrow.editing input")) saveAccount();
+  if (e.key === "Enter" && e.target.matches(".lrow.editing input")) editingId === NEW ? saveNewAccount($("#newAcct .rowbtns button")) : saveAccount();
   if (e.key === "Enter" && e.target.id === "root") saveRoot();
 });
 window.addEventListener("beforeunload", e => { if (location.pathname === "/settings" && settingsDirty()) e.preventDefault(); });

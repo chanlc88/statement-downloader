@@ -49,7 +49,7 @@ dotnet run --project src/StatementDownloader.App -- paths           # shows wher
    statement-downloader assist <account-id>
    statement-downloader install
    ```
-5. Open <http://localhost:5187> for the dashboard, review list and issues. Accounts can have a **group** (dashboard sections) and **tags** (filter chips). **Settings** changes groups, tags and where each account's documents are saved (base folder, folder and file name, with a live preview); it edits `config.yaml` in place, keeping your comments.
+5. Open <http://localhost:5187> for the dashboard, review list and issues. Accounts can have a **group** (dashboard sections) and **tags** (filter chips). **Settings** adds accounts and changes groups, tags and where each account's documents are saved (base folder, folder and file name, with a live preview); it edits `config.yaml` in place, keeping your comments.
 
 ## Commands
 
