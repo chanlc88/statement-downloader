@@ -1,0 +1,68 @@
+# U.S. Bank — credit cards (usbank.com).
+# Format: docs/site-recipes.md. Regexes are written in 'single quotes' so backslashes stay as-is.
+id: us-bank
+name: U.S. Bank (credit cards)
+kind: statement
+region: US
+website: https://www.usbank.com
+verified: 2026-11-28
+notes: >
+  Username + password; new devices get a one-time code. Statements (My documents → Statements)
+  lists one year at a time ("November 3, 2026"), each with a Download button; the PDF is named like
+  "2026-11-03 Statement - USB Credit Card 1234.pdf". Set siteOptions.account to the card's last four
+  digits; the page must show that card, and a PDF for another card is never filed under it.
+
+options:
+  account: The card's last four digits, e.g. "1234".
+
+signIn:
+  url: https://onlinebanking.usbank.com/auth/login/
+  username: '#input_aw-personal-id'
+  password: '#input_aw-password'
+  submit: '#login-button-continue'
+  signedIn: 'button[aria-label="Log out"]'
+  yourBrowser: true
+  unattended: true
+
+documents:
+  steps:
+    - goto: https://onlinebanking.usbank.com/digital/servicing/shellapp/#/highvolume/edocs/statements
+    - waitFor: 'li.download-items'
+      timeout: 60s
+    - waitFor: '[data-testid="account-dropdown"]:has-text("...{account}")'
+      timeout: 15s
+  years:
+    - click: '#exp_button_year-filter-select'
+    - click: '#dropdown_item_list_year-filter-select button[role=option][value="{year}"]'
+      timeout: 5s
+    - waitFor: '#exp_button_year-filter-select .dropdown__btn-selection:has-text("{year}")'
+    - waitFor: 'li.download-items'
+  list:
+    rows: 'li.download-items'
+    date: { selector: 'a.download-items__link', pattern: '([A-Z][a-z]+ \d{1,2}, \d{4})' }
+    link: { selector: 'button.download-items__button' }
+  download: click
+
+parse:
+  require: 'usbank\.com|U\.S\. Bank'
+  # "Open Date: 10/03/2026 Closing Date: 11/03/2026"
+  date: 'Closing Date: (\d{2}/\d{2}/\d{4})'
+  dateFormats: ['MM/dd/yyyy']
+  accountNumber: 'Account Ending in:[ #]*(\d{4})'
+  accountOption: account
+  amount: 'New Balance = (-?\$[\d,]+\.\d{2})'
+
+# Checked by the test suite. Made-up numbers only; text is in the order `pdf-text` prints it.
+tests:
+  documents:
+    - text: >-
+        Open Date: 10/03/2027 Closing Date: 11/03/2027 Account Ending in: #### #### #### 1234 Page 1
+        of 3 Previous Balance + $12.00 Payments - $12.00 New Balance $31.00 Minimum Payment Due $31.00
+        Payment Due Date 12/01/2027 U.S. Bank Visa Card Cardmember Service New Balance = $31.00 Pay
+        online at usbank.com
+      expect: { date: 2027-11-03, amount: 31.00, accountNumber: '1234' }
+    - text: 'Chase chase.com Closing Date 10/16/27 New Balance $1.00'
+      expect: null
+  rows:
+    - cells: ['November 3, 2027']
+      expect: { date: 2027-11-03, url: '' }
