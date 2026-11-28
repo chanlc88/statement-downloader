@@ -227,7 +227,11 @@ public sealed class RecipeSiteFetcher(SiteRecipe recipe) : PlaywrightSiteFetcher
             var parsed = Parser.Parse(PdfText.Extract(path));
             if (parsed is null)
             {
-                ctx.Log.LogWarning("{Site}: the {Kind} dated {Date} downloaded but its text didn't match the recipe", SiteId, recipe.Kind, doc.Date);
+                // Kept (one per date) so the recipe can be written or fixed from it: `pdf-text <file>`.
+                var keep = Path.Combine(ctx.DiagnosticsDir, $"unmatched-{doc.Date:yyyy-MM-dd}.pdf");
+                try { Directory.CreateDirectory(ctx.DiagnosticsDir); File.Move(path, keep, overwrite: true); }
+                catch (IOException) { keep = path; }
+                ctx.Log.LogWarning("{Site}: the {Kind} dated {Date} downloaded but its text didn't match the recipe (kept at {Path})", SiteId, recipe.Kind, doc.Date, keep);
                 continue;
             }
             // Several accounts on one login: never file another account's document under this one.

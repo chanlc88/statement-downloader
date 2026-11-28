@@ -14,7 +14,8 @@ notes: >
   year's statements for all of them as cards; filling gaps picks older years in its year list. Set siteOptions.account to the last four digits
   shown on the card ("Business Adv Relationship - 1234") — one SD account per BofA account.
   Card statements print the closing date and New Balance Total; bank statements the period
-  end and ending balance.
+  end and ending balance; mortgage statements the statement date and total amount due (a
+  mortgage's Escrow Analysis, listed alongside, is skipped).
 
 options:
   account: The account's last four digits as Statements & Documents shows them, e.g. "1234".
@@ -37,6 +38,17 @@ documents:
     - click: 'button.panel-header[aria-controls="stmtsAndDocsSqueezeboxPanel0"][aria-expanded="false"]'
       timeout: 5s
       optional: true
+    # The panel can come back drawn closed while its button still says it's open (the wrapper
+    # then says all-panels-closed): click it until it's drawn open (two clicks at most).
+    - click: '#stmtsAndDocsSqueezebox.all-panels-closed button.panel-header[aria-controls="stmtsAndDocsSqueezeboxPanel0"]'
+      timeout: 2s
+      optional: true
+    - waitFor: '#stmtsAndDocsSqueezebox:not(.all-panels-closed)'
+      timeout: 3s
+      optional: true
+    - click: '#stmtsAndDocsSqueezebox.all-panels-closed button.panel-header[aria-controls="stmtsAndDocsSqueezeboxPanel0"]'
+      timeout: 2s
+      optional: true
   # The list shows one year (the current one by default). Filling gaps picks each missing year in
   # the year drop-down; its id isn't confirmed on the live page, hence the fallbacks.
   years:
@@ -47,8 +59,20 @@ documents:
     - click: 'button.panel-header[aria-controls="stmtsAndDocsSqueezeboxPanel0"][aria-expanded="false"]'
       timeout: 5s
       optional: true
+    # The panel can come back drawn closed while its button still says it's open (the wrapper
+    # then says all-panels-closed): click it until it's drawn open (two clicks at most).
+    - click: '#stmtsAndDocsSqueezebox.all-panels-closed button.panel-header[aria-controls="stmtsAndDocsSqueezeboxPanel0"]'
+      timeout: 2s
+      optional: true
+    - waitFor: '#stmtsAndDocsSqueezebox:not(.all-panels-closed)'
+      timeout: 3s
+      optional: true
+    - click: '#stmtsAndDocsSqueezebox.all-panels-closed button.panel-header[aria-controls="stmtsAndDocsSqueezeboxPanel0"]'
+      timeout: 2s
+      optional: true
   list:
-    rows: '#stmtsAndDocsSqueezeboxPanel0 .card:has(.accountName[title$="- {account}"])'
+    # A mortgage also lists its Escrow Analysis here; only statements are wanted.
+    rows: '#stmtsAndDocsSqueezeboxPanel0 .card:has(.accountName[title$="- {account}"]):not([data-docdisplayname*="Escrow" i])'
     date: { selector: '.availableTillDate' }
     expand: '.front'
     link: { selector: 'a.download-pdf-link' }
@@ -59,14 +83,20 @@ parse:
   # Bank: "for September 1, 2026 to September 30, 2026". Card: "Statement Closing Date ..... 10/07/26".
   date:
     - 'for [A-Z][a-z]+ \d{1,2}, \d{4} to ([A-Z][a-z]+ \d{1,2}, \d{4})'
-    - 'Statement Closing Date \.* ?(\d{2}/\d{2}/\d{2})'
-  dateFormats: ['MMMM d, yyyy', 'MMMM dd, yyyy', 'MM/dd/yy', 'MMM dd, yyyy']
+    # Business cards print a two-digit year, personal cards four.
+    - 'Statement Closing Date \.* ?(\d{2}/\d{2}/\d{2}(?:\d{2})?)'
+    # Mortgage: "Statement date 11/02/2026".
+    - 'Statement date (\d{2}/\d{2}/\d{4})'
+  dateFormats: ['MMMM d, yyyy', 'MMMM dd, yyyy', 'MM/dd/yy', 'MM/dd/yyyy', 'MMM dd, yyyy']
   accountNumber:
     - 'Account number: \d{4} \d{4} (\d{4})'
     - '\d{4} \d{4} \d{4} (\d{4}) [A-Z][a-z]+ \d{2}, \d{4} - '
-  # Card: the new balance. Bank: the ending balance.
+    - 'Account Number:\s+\d{4} \d{4} \d{4} (\d{4})'
+    - 'Acct ending in (\d{4})'
+  # Card: the new balance. Bank: the ending balance. Mortgage: the amount due.
   amount:
     - 'New Balance Total \.* ?\$([\d,]+\.\d{2})'
+    - 'Total amount due \$([\d,]+\.\d{2})'
     - 'Ending balance on [A-Z][a-z]+ \d{1,2}, \d{4} \$([\d,]+\.\d{2})'
 
 # Checked by the test suite. Made-up numbers only; text is in the order `pdf-text` prints it.
@@ -83,6 +113,18 @@ tests:
         Summary Previous Balance ........ $100.00 New Balance Total ....... $123.45 Statement Closing Date
         .......... 10/07/26 Account Information: www.bankofamerica.com
       expect: { date: 2026-10-07, amount: 123.45, accountNumber: '5678' }
+    - text: >-
+        EXAMPLE NAME Customized Cash Rewards Visa Signature Account# 1111 2222 3333 5678 December 16 -
+        January 15, 2027 New Balance Total $2,345.67 Current Payment Due $25.00 Statement Closing Date
+        01/15/2027Days in Billing Cycle 31 Account Number:    1111 2222 3333 5678Payment Due Date
+        02/12/2027 www.bankofamerica.com
+      expect: { date: 2027-01-15, amount: 2345.67, accountNumber: '5678' }
+    - text: >-
+        Customer service information bankofamerica.com Account Information Property address 1 EXAMPLE WAY
+        Principal balance $100,000.00 Account number 1234567890 Statement date 11/02/2027 Payment due date
+        12/01/2027 Total amount due $1,234.56 Explanation of total amount due Total amount due $1,234.56
+        Home Loan Account EXAMPLE NAME Acct ending in 7890 11/02/2027 Page 2 of 6
+      expect: { date: 2027-11-02, amount: 1234.56, accountNumber: '7890' }
     - text: 'JPMorgan Chase chase.com through October 30, 2026 Ending Balance $5.00'
       expect: null
   rows:
