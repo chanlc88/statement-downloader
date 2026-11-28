@@ -32,11 +32,16 @@ public sealed class RecipeSiteFetcher(SiteRecipe recipe) : PlaywrightSiteFetcher
 
     protected override async Task WaitForPageReadyAsync(IPage page, CancellationToken ct)
     {
-        // Combined with Or, not commas: a selector that steps into a frame (`a >> internal:control=enter-frame >> b`)
-        // can't be joined into a comma list.
-        var any = page.Locator(S.SignedIn).Or(page.Locator(S.Username)).Or(page.Locator(S.Password));
-        try { await any.First.WaitForAsync(new LocatorWaitForOptions { Timeout = 20_000 }); }
-        catch (TimeoutException) { /* classified after the sign-in attempt */ }
+        // Each checked on its own: a selector that steps into a frame (`a >> internal:control=enter-frame >> b`)
+        // can't be joined into a comma list or an Or.
+        var any = new[] { S.SignedIn, S.Username, S.Password }.Select(x => page.Locator(x).First).ToList();
+        var until = DateTime.UtcNow.AddSeconds(20);
+        while (DateTime.UtcNow < until)
+        {
+            foreach (var l in any)
+                if (await Quietly(() => l.IsVisibleAsync())) return;
+            await Task.Delay(250, ct);
+        }
     }
 
     // A site that remembers the user ID may show only the password (the ID as a masked choice).
