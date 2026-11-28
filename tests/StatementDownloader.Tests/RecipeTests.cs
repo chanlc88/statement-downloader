@@ -37,6 +37,19 @@ public class RecipeTests
     }
 
     [Fact]
+    public void Account_check_accepts_former_numbers()
+    {
+        var parse = Recipe("citi").Parse;
+        var options = new Dictionary<string, string> { ["account"] = "1234", [ParseRecipe.FormerAccounts] = "5678, 9012" };
+        Assert.True(parse.IsThisAccount("1234", options));
+        Assert.True(parse.IsThisAccount("5678", options));
+        Assert.True(parse.IsThisAccount("9012", options));
+        Assert.False(parse.IsThisAccount("3456", options));
+        Assert.False(parse.IsThisAccount("5678", new Dictionary<string, string> { ["account"] = "1234" }));
+        Assert.True(parse.IsThisAccount(null, options));
+    }
+
+    [Fact]
     public void Westfield_reads_the_emailed_passcode()
     {
         var ec = Recipe("westfield").SignIn.EmailCode!;

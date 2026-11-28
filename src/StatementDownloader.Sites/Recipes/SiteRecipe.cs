@@ -202,6 +202,26 @@ public sealed class ParseRecipe
     /// downloaded document for another account on the same login is then skipped, not filed.
     /// </summary>
     public string? AccountOption { get; set; }
+
+    /// <summary>
+    /// The site option, allowed on any recipe with an <see cref="AccountOption"/>, listing earlier
+    /// numbers the same account printed (e.g. before a replacement card), comma-separated.
+    /// </summary>
+    public const string FormerAccounts = "formerAccounts";
+
+    /// <summary>
+    /// Whether a document printed with <paramref name="theirs"/> belongs to this account: it ends with
+    /// the account option's value or one of its <see cref="FormerAccounts"/>. True when no check applies.
+    /// </summary>
+    public bool IsThisAccount(string? theirs, IReadOnlyDictionary<string, string> siteOptions)
+    {
+        if (AccountOption is not { } option || siteOptions.GetValueOrDefault(option) is not { Length: > 0 } mine || theirs is null)
+            return true;
+        var accepted = (siteOptions.GetValueOrDefault(FormerAccounts) ?? "")
+            .Split([',', ';', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Prepend(mine.Trim());
+        return accepted.Any(n => theirs.EndsWith(n, StringComparison.OrdinalIgnoreCase));
+    }
 }
 
 /// <summary>One regex or a list of them.</summary>

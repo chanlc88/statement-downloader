@@ -43,7 +43,8 @@ public static class SettingsService
             var folder = CleanFolder(n.Folder ?? "");
             var fileName = (n.FileName ?? "").Trim();
             if ((AccountLocation.FolderProblem(folder) ?? AccountLocation.FileNameProblem(fileName)) is { } problem) throw new SettingsProblem(problem);
-            var unknown = (n.Options ?? []).Keys.Where(k => !site.Recipe.Options.ContainsKey(k)).ToList();
+            var unknown = (n.Options ?? []).Keys.Where(k => !site.Recipe.Options.ContainsKey(k)
+                && !(k == ParseRecipe.FormerAccounts && site.Recipe.Parse.AccountOption is not null)).ToList();
             if (unknown.Count > 0)
                 throw new SettingsProblem($"{site.Recipe.Name} has no option {string.Join(", ", unknown)}." +
                     (site.Recipe.Options.Count > 0 ? $" Its options: {string.Join(", ", site.Recipe.Options.Keys)}." : " It takes no options."));

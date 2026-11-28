@@ -243,10 +243,10 @@ public sealed class RecipeSiteFetcher(SiteRecipe recipe) : PlaywrightSiteFetcher
                 continue;
             }
             // Several accounts on one login: never file another account's document under this one.
-            if (recipe.Parse.AccountOption is { } option && ctx.Account.SiteOptions.GetValueOrDefault(option) is { Length: > 0 } mine
-                && parsed.AccountNumber is { } theirs && !theirs.EndsWith(mine.Trim(), StringComparison.OrdinalIgnoreCase))
+            if (!recipe.Parse.IsThisAccount(parsed.AccountNumber, ctx.Account.SiteOptions))
             {
-                ctx.Log.LogWarning("{Site}: skipped a {Kind} for account …{Theirs}; this account is …{Mine}", SiteId, recipe.Kind, theirs, mine);
+                ctx.Log.LogWarning("{Site}: skipped a {Kind} for account …{Theirs}; this account is …{Mine} (an earlier number can be added as siteOptions.{Former})",
+                    SiteId, recipe.Kind, parsed.AccountNumber, ctx.Account.SiteOptions[recipe.Parse.AccountOption!], ParseRecipe.FormerAccounts);
                 File.Delete(path);
                 continue;
             }

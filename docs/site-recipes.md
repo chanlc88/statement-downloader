@@ -175,7 +175,7 @@ Read from the PDF's text, exactly as `statement-downloader pdf-text <file>` prin
 | `statementNumber` | | Statement or invoice number. Used to avoid duplicates and in action references, so worth having. |
 | `amount` | | The amount to record — usually this period's charges rather than a total that includes past balances. |
 | `accountNumber` | | Your account number with the company. |
-| `accountOption` | | A site option the account number must end with, e.g. `account`, for logins with several accounts: a downloaded document for another account is skipped rather than filed under this one. |
+| `accountOption` | | A site option the account number must end with, e.g. `account`, for logins with several accounts: a downloaded document for another account is skipped rather than filed under this one. If the account printed an earlier number (e.g. before a replacement card), list it in the account's `siteOptions: { formerAccounts: "5678" }` (comma-separated for several). |
 
 Each can be one pattern or a list; the first that matches wins. A statement number equal
 to the account number is discarded (it means a pattern matched the wrong label).
