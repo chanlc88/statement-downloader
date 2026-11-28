@@ -5,14 +5,14 @@ name: Citi (credit cards)
 kind: statement
 region: US
 website: https://www.citi.com
-verified: 2026-11-27
+verified: 2026-11-28
 notes: >
   User ID + password; new devices get a one-time code. Once the site remembers the user ID it
   shows it as a masked choice and only the password is filled. Statements & Documents →
   Statements lists up to 24 months, one year at a time ("October statement ending on October 20,
   2026"), each with a Download button. A pop-up asking to confirm your income may cover the page; it
   is closed. Set siteOptions.account to the card's last four digits; a PDF for another card is never
-  filed under it.
+  filed under it. When the login has several cards, the "Select an Account" drop-down is set to it.
 
 options:
   account: The card's last four digits, e.g. "1234".
@@ -38,6 +38,22 @@ documents:
     - click: '[role=dialog] button.cds-modal2-close >> visible=true'
       timeout: 8s
       optional: true
+    # With more than one card on the login, a "Select an Account" drop-down picks the card; with
+    # one card the page just names it. Either way the page must end up showing this card.
+    - click: '#account-selector-dropdown:not(:has-text("- {account}"))'
+      timeout: 10s
+      optional: true
+    - click: '#account-selector-dropdown-listbox [role=option]:has-text("- {account}")'
+      timeout: 5s
+      optional: true
+    - waitFor: '#account-selector-dropdown:has-text("- {account}"), #single-account-display:has-text("- {account}")'
+      timeout: 20s
+    # The list reloads for the chosen card; give it a moment so the old card's rows aren't read.
+    - click: '#sd-never-present'
+      timeout: 4s
+      optional: true
+    - waitFor: 'div.desktop-list[id^="desktop-statements-list-"]'
+      timeout: 60s
   years:
     - click: '#recent-year-dropdown'
     - click: '#recent-year-dropdown-listbox [role=option]:has-text("{year}")'
