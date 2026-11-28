@@ -307,11 +307,13 @@ public abstract class PlaywrightSiteFetcher : ISiteFetcher
 
     /// <summary>Clicks something that triggers a file download and saves it.</summary>
     /// <param name="confirm">Clicked after <paramref name="target"/> when that opens a dialog whose button starts the download.</param>
-    protected static async Task<string?> DownloadByClickAsync(IPage page, ILocator target, string workDir, string name, string? confirm = null)
+    /// <param name="settle">How long to wait between the two clicks, for the chosen document to load.</param>
+    protected static async Task<string?> DownloadByClickAsync(IPage page, ILocator target, string workDir, string name, string? confirm = null, TimeSpan? settle = null)
     {
         var download = await page.RunAndWaitForDownloadAsync(async () =>
         {
             await target.ClickAsync();
+            if (settle is { } wait) await Task.Delay(wait);
             if (confirm is not null) await page.Locator(confirm).First.ClickAsync(new LocatorClickOptions { Timeout = 15_000 });
         }, new PageRunAndWaitForDownloadOptions { Timeout = 60_000 });
         var path = Path.Combine(workDir, name);

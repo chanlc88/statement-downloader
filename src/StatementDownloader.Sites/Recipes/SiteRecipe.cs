@@ -151,13 +151,24 @@ public sealed class ListRecipe
     /// opens a dialog (e.g. choosing the file type) whose button starts the download.
     /// </summary>
     public string? Confirm { get; set; }
+    /// <summary>
+    /// An element on the page to click when a row's link isn't visible — for a list shown in a
+    /// picker that closes once a document is chosen, so it's opened again for the next one.
+    /// </summary>
+    public string? Open { get; set; }
+    /// <summary>With <c>confirm</c>: how long to let the chosen document load before clicking it.</summary>
+    public string? Settle { get; set; }
 }
 
-/// <summary>A value in a row: a 1-based table cell, or the text of a selector, optionally narrowed by a regex.</summary>
+/// <summary>
+/// A value in a row: a 1-based table cell, the text of a selector, or an attribute (of a selector,
+/// or of the row itself), optionally narrowed by a regex.
+/// </summary>
 public sealed class FieldRecipe
 {
     public int? Column { get; set; }
     public string? Selector { get; set; }
+    public string? Attribute { get; set; }
     public string? Pattern { get; set; }
 }
 
@@ -351,6 +362,7 @@ public static class RecipeLoader
         foreach (var name in RecipeOptions.Names(r.Documents.List.Rows))
             if (!r.Options.ContainsKey(name)) e.Add($"documents.list.rows uses {{{name}}}, which isn't listed under options.");
         Duration(r.Documents.List.Wait, "documents.list.wait");
+        if (r.Documents.List.Settle is { } settle) Duration(settle, "documents.list.settle");
         Duration(r.Documents.FirstRunLookback, "documents.firstRunLookback");
         if (r.Documents.List.Amount is { } amount) Field(amount, "documents.list.amount", required: false);
         Regex1(r.Documents.List.Link.Pattern, "documents.list.link.pattern");
@@ -379,7 +391,7 @@ public static class RecipeLoader
         }
         void Field(FieldRecipe f, string name, bool required)
         {
-            if (f.Column is null && string.IsNullOrWhiteSpace(f.Selector)) { if (required) e.Add($"{name} needs a column or a selector."); }
+            if (f.Column is null && string.IsNullOrWhiteSpace(f.Selector) && string.IsNullOrWhiteSpace(f.Attribute)) { if (required) e.Add($"{name} needs a column, a selector or an attribute."); }
             else if (f.Column is < 1) e.Add($"{name}.column counts from 1.");
             Regex1(f.Pattern, name + ".pattern");
         }

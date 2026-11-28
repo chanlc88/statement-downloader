@@ -1,0 +1,137 @@
+# Capital One — credit cards (capitalone.com).
+# Format: docs/site-recipes.md. Regexes are written in 'single quotes' so backslashes stay as-is.
+id: capital-one
+name: Capital One (credit cards)
+kind: statement
+region: US
+website: https://www.capitalone.com
+verified: 2026-11-27
+notes: >
+  Username + password; new devices get a one-time code. One login shows every card: set
+  siteOptions.account to the card's last four digits, one SD account per card. Each card's
+  Statements page shows the latest statement in a viewer; its statement picker shows one year at a
+  time as a calendar (months with a statement carry the closing date; quarterly and year-end
+  summaries are skipped). Choosing a month closes the picker and loads that statement; Download
+  saves it. Discover cards now live under Capital One and print their own layout. Filling gaps steps the picker's year back or forward. Each PDF prints the card's last
+  four digits, so a statement for another card is never filed under this one.
+
+options:
+  account: The card's last four digits, e.g. "1234".
+
+signIn:
+  url: https://verified.capitalone.com/auth/signin
+  username: '#usernameInputField'
+  password: '#pwInputField'
+  submit: '[data-testtarget="sign-in-submit-button"]'
+  signedIn: 'c1-ease-profile'
+  yourBrowser: true
+  unattended: true
+
+documents:
+  steps:
+    - goto: https://myaccounts.capitalone.com/accountSummary
+    - click: '[role=link].primary-detail__identity:has-text("{account}")'
+      timeout: 60s
+    - click: 'a:has-text("View statements") >> visible=true'
+      timeout: 60s
+    - waitFor: '.c1-ease-statement-viewer__menu-download'
+      timeout: 60s
+    - click: 'button[aria-label="Open statement picker"][aria-expanded="false"]'
+  # The picker shows one year; step it to the wanted one (back or forward, at most eight years).
+  years:
+    - click: 'button[aria-label="Open statement picker"][aria-expanded="false"]'
+      timeout: 3s
+      optional: true
+    - click: '.c1-ease-statement-picker-robust-header:not(:has-text("{year}")) .c1-ease-statement-picker-robust-header__previous-button:not([disabled])'
+      timeout: 1s
+      optional: true
+    - click: '.c1-ease-statement-picker-robust-header:not(:has-text("{year}")) .c1-ease-statement-picker-robust-header__previous-button:not([disabled])'
+      timeout: 1s
+      optional: true
+    - click: '.c1-ease-statement-picker-robust-header:not(:has-text("{year}")) .c1-ease-statement-picker-robust-header__previous-button:not([disabled])'
+      timeout: 1s
+      optional: true
+    - click: '.c1-ease-statement-picker-robust-header:not(:has-text("{year}")) .c1-ease-statement-picker-robust-header__previous-button:not([disabled])'
+      timeout: 1s
+      optional: true
+    - click: '.c1-ease-statement-picker-robust-header:not(:has-text("{year}")) .c1-ease-statement-picker-robust-header__previous-button:not([disabled])'
+      timeout: 1s
+      optional: true
+    - click: '.c1-ease-statement-picker-robust-header:not(:has-text("{year}")) .c1-ease-statement-picker-robust-header__previous-button:not([disabled])'
+      timeout: 1s
+      optional: true
+    - click: '.c1-ease-statement-picker-robust-header:not(:has-text("{year}")) .c1-ease-statement-picker-robust-header__previous-button:not([disabled])'
+      timeout: 1s
+      optional: true
+    - click: '.c1-ease-statement-picker-robust-header:not(:has-text("{year}")) .c1-ease-statement-picker-robust-header__previous-button:not([disabled])'
+      timeout: 1s
+      optional: true
+    - click: '.c1-ease-statement-picker-robust-header:not(:has-text("{year}")) .c1-ease-statement-picker-robust-header__next-button:not([disabled])'
+      timeout: 1s
+      optional: true
+    - click: '.c1-ease-statement-picker-robust-header:not(:has-text("{year}")) .c1-ease-statement-picker-robust-header__next-button:not([disabled])'
+      timeout: 1s
+      optional: true
+    - click: '.c1-ease-statement-picker-robust-header:not(:has-text("{year}")) .c1-ease-statement-picker-robust-header__next-button:not([disabled])'
+      timeout: 1s
+      optional: true
+    - click: '.c1-ease-statement-picker-robust-header:not(:has-text("{year}")) .c1-ease-statement-picker-robust-header__next-button:not([disabled])'
+      timeout: 1s
+      optional: true
+    - click: '.c1-ease-statement-picker-robust-header:not(:has-text("{year}")) .c1-ease-statement-picker-robust-header__next-button:not([disabled])'
+      timeout: 1s
+      optional: true
+    - click: '.c1-ease-statement-picker-robust-header:not(:has-text("{year}")) .c1-ease-statement-picker-robust-header__next-button:not([disabled])'
+      timeout: 1s
+      optional: true
+    - click: '.c1-ease-statement-picker-robust-header:not(:has-text("{year}")) .c1-ease-statement-picker-robust-header__next-button:not([disabled])'
+      timeout: 1s
+      optional: true
+    - click: '.c1-ease-statement-picker-robust-header:not(:has-text("{year}")) .c1-ease-statement-picker-robust-header__next-button:not([disabled])'
+      timeout: 1s
+      optional: true
+    - waitFor: '.c1-ease-statement-picker-robust-header:has-text("{year}")'
+      timeout: 3s
+  list:
+    # Months with a statement are labelled with the closing date ("September 20, 2026").
+    rows: '.c1-ease-statement-picker-robust-body-cell__content[aria-label*=", 20"]:not([aria-label*="Summary"])'
+    wait: 15s
+    date: { attribute: aria-label }
+    open: 'button[aria-label="Open statement picker"][aria-expanded="false"]'
+    confirm: '.c1-ease-statement-viewer__menu-download'
+    settle: 4s
+  download: click
+
+parse:
+  require: 'capitalone\.com'
+  # "Quicksilver Credit Card | Visa Signature ending in 1234 Aug 22, 2026 - Sep 20, 2026 | 30 days in Billing Cycle"
+  # Discover cards (now Capital One): "OPEN TO CLOSE DATE: 08/10/2026 - 09/08/2026".
+  date:
+    - 'ending in \d{4} [A-Z][a-z]{2} \d{1,2}, \d{4} - ([A-Z][a-z]{2} \d{1,2}, \d{4})'
+    - 'OPEN TO CLOSE DATE: \d{2}/\d{2}/\d{4} - (\d{2}/\d{2}/\d{4})'
+  dateFormats: ['MMM d, yyyy', 'MMM dd, yyyy', 'MMMM d, yyyy', 'MM/dd/yyyy']
+  accountNumber: 'Account ending in (\d{4})'
+  accountOption: account
+  amount:
+    - 'New Balance = (-?\$[\d,]+\.\d{2})'
+    - 'New Balance: (-?\$[\d,]+\.\d{2})'
+
+# Checked by the test suite. Made-up numbers only; text is in the order `pdf-text` prints it.
+tests:
+  documents:
+    - text: >-
+        Example Credit Card | Visa Signature ending in 1234 Aug 22, 2027 - Sep 20, 2027 | 30 days in
+        Billing Cycle Pay or manage your account at capitalone.com Payment Due Date: Oct 15, 2027
+        Account ending in 1234 New Balance $12.34 Previous Balance $0.00 Fees Charged + $0.00
+        Interest Charged + $0.00 New Balance = $12.34 Credit Limit $1,000.00
+      expect: { date: 2027-09-20, amount: 12.34, accountNumber: '1234' }
+    - text: >-
+        Pay or manage your account at discover.capitalone.com Interest Charged + $0.00 New Balance:
+        $45.67 Discover it Card ending in 1234 OPEN TO CLOSE DATE: 08/10/2027 - 09/08/2027 Payment Due
+        Date: Oct 03, 2027 Account ending in 1234 New Balance $45.67
+      expect: { date: 2027-09-08, amount: 45.67, accountNumber: '1234' }
+    - text: 'Chase chase.com Closing Date 10/16/27 New Balance $1.00'
+      expect: null
+  rows:
+    - cells: ['September 20, 2027']
+      expect: { date: 2027-09-20, url: '' }

@@ -31,16 +31,18 @@ public sealed class RecipeSiteFetcher(SiteRecipe recipe) : PlaywrightSiteFetcher
 
     protected override async Task WaitForPageReadyAsync(IPage page, CancellationToken ct)
     {
-        try { await page.Locator($"{S.SignedIn}, {S.Username}").First.WaitForAsync(new LocatorWaitForOptions { Timeout = 20_000 }); }
+        try { await page.Locator($"{S.SignedIn}, {S.Username}, {S.Password}").First.WaitForAsync(new LocatorWaitForOptions { Timeout = 20_000 }); }
         catch (TimeoutException) { /* classified after the sign-in attempt */ }
     }
 
-    protected override Task<bool> HasSignInFormAsync(IPage page, CancellationToken ct) =>
-        page.Locator(S.Username).First.IsVisibleAsync();
+    // A site that remembers the user ID may show only the password (the ID as a masked choice).
+    protected override async Task<bool> HasSignInFormAsync(IPage page, CancellationToken ct) =>
+        await page.Locator(S.Username).First.IsVisibleAsync() || await page.Locator(S.Password).First.IsVisibleAsync();
 
     protected override async Task SubmitSignInAsync(IPage page, SiteCredential credential, CancellationToken ct, bool submit = true)
     {
-        await page.Locator(S.Username).First.FillAsync(credential.Username);
+        var username = page.Locator(S.Username).First;
+        if (await username.IsVisibleAsync()) await username.FillAsync(credential.Username);
         if (!submit)
         {
             // Fill what's showing; the person goes on (a two-page form's password is filled when it appears).
@@ -48,7 +50,7 @@ public sealed class RecipeSiteFetcher(SiteRecipe recipe) : PlaywrightSiteFetcher
                 await page.Locator(S.Password).First.FillAsync(credential.Password);
             return;
         }
-        if (S.Next is { } next)
+        if (S.Next is { } next && await page.Locator(next).First.IsVisibleAsync())
         {
             await page.Locator(next).First.ClickAsync();
             await page.Locator(S.Password).First.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 20_000 });
@@ -213,9 +215,14 @@ public sealed class RecipeSiteFetcher(SiteRecipe recipe) : PlaywrightSiteFetcher
                 await row.Locator(expand).First.ClickAsync(new LocatorClickOptions { Timeout = 10_000 });
                 await linkElement.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 15_000 });
             }
+            if (list.Open is { } open && !await ClickableAsync(linkElement))
+            {
+                await In(page, list.Frame, open).First.ClickAsync(new LocatorClickOptions { Timeout = 10_000 });
+                await linkElement.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 15_000 });
+            }
             var path = d.Download switch
             {
-                "click" => await DownloadByClickAsync(page, linkElement, ctx.WorkDir, name, list.Confirm),
+                "click" => await DownloadByClickAsync(page, linkElement, ctx.WorkDir, name, list.Confirm, list.Settle is { } st ? Durations.Parse(st) : null),
                 "popup" => await DownloadByPopupAsync(page, browser, linkElement, ctx.WorkDir, name),
                 _ => await DownloadPdfAsync(browser, new Uri(new Uri(baseUrl), doc.Link).ToString(), ctx.WorkDir, name),
             };
@@ -325,10 +332,14 @@ public sealed class RecipeSiteFetcher(SiteRecipe recipe) : PlaywrightSiteFetcher
     private static ILocator In(IPage page, string? frame, string selector) =>
         frame is null ? page.Locator(selector) : page.FrameLocator(frame).Locator(selector);
 
-    private static async Task<string?> FieldTextAsync(ILocator row, FieldRecipe f, IReadOnlyList<string> cells) =>
-        f.Column is not null
-            ? RecipeRows.Cell(f, cells)
-            : await Quietly(() => row.Locator(f.Selector!).First.InnerTextAsync(new LocatorInnerTextOptions { Timeout = 2000 }));
+    private static async Task<string?> FieldTextAsync(ILocator row, FieldRecipe f, IReadOnlyList<string> cells)
+    {
+        if (f.Column is not null) return RecipeRows.Cell(f, cells);
+        var element = f.Selector is { } sel ? row.Locator(sel).First : row;
+        return f.Attribute is { } attr
+            ? await Quietly(() => element.GetAttributeAsync(attr, new LocatorGetAttributeOptions { Timeout = 2000 }))
+            : await Quietly(() => element.InnerTextAsync(new LocatorInnerTextOptions { Timeout = 2000 }));
+    }
 
     private static async Task<string?> FrameUrlAsync(IPage page, string? frame)
     {

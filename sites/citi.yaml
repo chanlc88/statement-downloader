@@ -1,0 +1,76 @@
+# Citi — credit cards (citi.com).
+# Format: docs/site-recipes.md. Regexes are written in 'single quotes' so backslashes stay as-is.
+id: citi
+name: Citi (credit cards)
+kind: statement
+region: US
+website: https://www.citi.com
+verified: 2026-11-27
+notes: >
+  User ID + password; new devices get a one-time code. Once the site remembers the user ID it
+  shows it as a masked choice and only the password is filled. Statements & Documents →
+  Statements lists up to 24 months, one year at a time ("October statement ending on October 20,
+  2026"), each with a Download button. A pop-up asking to confirm your income may cover the page; it
+  is closed. Set siteOptions.account to the card's last four digits; a PDF for another card is never
+  filed under it.
+
+options:
+  account: The card's last four digits, e.g. "1234".
+
+signIn:
+  url: https://www.citi.com/
+  username: '#username'
+  password: '#password, input[name="password"]'
+  submit: '#signInBtn'
+  signedIn: '#signOffmainAnchor'
+  yourBrowser: true
+  unattended: true
+
+documents:
+  steps:
+    - goto: https://online.citi.com/US/nga/accstatement
+    - click: '[role=dialog] button.cds-modal2-close >> visible=true'
+      timeout: 5s
+      optional: true
+    - waitFor: 'div.desktop-list[id^="desktop-statements-list-"]'
+      timeout: 60s
+    # A pop-up asking to confirm your income can appear a few seconds after the list.
+    - click: '[role=dialog] button.cds-modal2-close >> visible=true'
+      timeout: 8s
+      optional: true
+  years:
+    - click: '#recent-year-dropdown'
+    - click: '#recent-year-dropdown-listbox [role=option]:has-text("{year}")'
+      timeout: 5s
+    - waitFor: '#recent-year-dropdown:has-text("{year}")'
+    - click: '[role=dialog] button.cds-modal2-close >> visible=true'
+      timeout: 3s
+      optional: true
+  list:
+    rows: 'div.desktop-list[id^="desktop-statements-list-"]'
+    date: { selector: '[id^="desktop-statement-info-"]', pattern: 'ending on ([A-Z][a-z]+ \d{1,2}, \d{4})' }
+    link: { selector: 'button[id^="desktop-download-link-"]' }
+  download: click
+
+parse:
+  require: 'citicards\.com|citi\.com'
+  # "Billing Period: 09/19/26-10/20/26"
+  date: 'Billing Period: \d{2}/\d{2}/\d{2}-(\d{2}/\d{2}/\d{2})'
+  dateFormats: ['MM/dd/yy']
+  accountNumber: 'Account number ending in:? (\d{4})'
+  accountOption: account
+  amount: 'New balance as of \d{2}/\d{2}/\d{2}: (-?\$[\d,]+\.\d{2})'
+
+# Checked by the test suite. Made-up numbers only; text is in the order `pdf-text` prints it.
+tests:
+  documents:
+    - text: >-
+        Example Card Member Since 2000. Account number ending in: 1234 Billing Inquiries
+        www.citicards.com OCTOBER STATEMENT Billing Period: 09/19/27-10/20/27 New balance as of
+        10/20/27: $31.00 Minimum payment due $31.00 New balance $31.00 Payment due date 11/16/27
+      expect: { date: 2027-10-20, amount: 31.00, accountNumber: '1234' }
+    - text: 'Chase chase.com Closing Date 10/16/27 New Balance $1.00'
+      expect: null
+  rows:
+    - cells: ['October statement ending on October 20, 2027']
+      expect: { date: 2027-10-20, url: '' }
