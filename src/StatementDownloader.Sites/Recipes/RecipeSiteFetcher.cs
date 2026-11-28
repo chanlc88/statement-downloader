@@ -32,7 +32,10 @@ public sealed class RecipeSiteFetcher(SiteRecipe recipe) : PlaywrightSiteFetcher
 
     protected override async Task WaitForPageReadyAsync(IPage page, CancellationToken ct)
     {
-        try { await page.Locator($"{S.SignedIn}, {S.Username}, {S.Password}").First.WaitForAsync(new LocatorWaitForOptions { Timeout = 20_000 }); }
+        // Combined with Or, not commas: a selector that steps into a frame (`a >> internal:control=enter-frame >> b`)
+        // can't be joined into a comma list.
+        var any = page.Locator(S.SignedIn).Or(page.Locator(S.Username)).Or(page.Locator(S.Password));
+        try { await any.First.WaitForAsync(new LocatorWaitForOptions { Timeout = 20_000 }); }
         catch (TimeoutException) { /* classified after the sign-in attempt */ }
     }
 
