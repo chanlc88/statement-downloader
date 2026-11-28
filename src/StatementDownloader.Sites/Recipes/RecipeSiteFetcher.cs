@@ -17,6 +17,7 @@ public sealed class RecipeSiteFetcher(SiteRecipe recipe) : PlaywrightSiteFetcher
     protected override bool YourBrowser => recipe.SignIn.YourBrowser;
     protected override bool Unattended => recipe.SignIn.Unattended;
     public override bool EmailsCode => recipe.SignIn.EmailCode is not null;
+    public override bool QuietMonths => recipe.Documents.QuietMonths;
 
     public override DocumentIdentity? Identify(string path)
     {

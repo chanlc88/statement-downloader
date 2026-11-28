@@ -47,7 +47,7 @@ public sealed class TickRunner(
             {
                 var (estimate, _) = await EstimateAsync(account, ct);
                 var state = await schedule.GetAsync(account.Id, ct);
-                var decision = SchedulePlanner.Decide(account, config.Schedule, estimate, state, clock.GetUtcNow(), zone);
+                var decision = SchedulePlanner.Decide(account, config.Schedule, estimate, state, clock.GetUtcNow(), zone, QuietMonths(account, state));
                 await HandleNoticeAsync(account, decision, state, ct);
 
                 if (decision.Run == PlannedRun.None) continue;
@@ -112,12 +112,35 @@ public sealed class TickRunner(
         return failed;
     }
 
+    /// <summary>
+    /// Whether the account only has statements in months with activity (Amex skips quiet months):
+    /// what the person said, otherwise what the site's recipe says.
+    /// </summary>
+    public bool QuietMonths(AccountConfig account, ScheduleState state) => state.QuietMonths ?? runner.QuietMonthsBySite(account);
+    public bool QuietMonthsBySite(AccountConfig account) => runner.QuietMonthsBySite(account);
+
     /// <summary>The documents missing from the account's history; null until it has enough to know the cycle.</summary>
     public async Task<GapReport?> GapsAsync(AccountConfig account, CancellationToken ct = default)
     {
         var docs = await documents.GetAsync(account.Id, ct);
         var state = await schedule.GetAsync(account.Id, ct);
-        return GapFinder.Find(docs.Select(d => d.DocumentDate), state.ExpectFrom, state.GapMarks);
+        return GapFinder.Find(docs.Select(d => d.DocumentDate), state.ExpectFrom, state.GapMarks, QuietMonths(account, state));
+    }
+
+    /// <summary>
+    /// Records whether the account only has statements in months with activity (null: go by the
+    /// site). Turning it on clears the late and no-new notices, which don't apply any more.
+    /// </summary>
+    public async Task SetQuietMonthsAsync(AccountConfig account, bool? quiet, CancellationToken ct = default)
+    {
+        var state = await schedule.GetAsync(account.Id, ct);
+        state.QuietMonths = quiet;
+        await schedule.SaveAsync(state, ct);
+        if (QuietMonths(account, state))
+        {
+            await notify.ResolveAsync(OverdueIssueKey(account.Id), null, ct);
+            await notify.ResolveAsync(StaleIssueKey(account.Id), null, ct);
+        }
     }
 
     /// <summary>
@@ -132,7 +155,7 @@ public sealed class TickRunner(
         if (gaps is null) return new(0, 0, 0, $"SD needs at least {GapFinder.MinimumDocuments} {kind}s on record to know what's missing.");
         var wanted = gaps.Wanted(year);
         var where = year is null ? "" : $" from {year}";
-        if (wanted.Count == 0) return new(0, 0, 0, $"No missing {kind}s{where} to look for.");
+        if (wanted.Count == 0) return new(0, 0, 0, gaps.Quiet ? $"Every month without a {kind}{where} has been checked already." : $"No missing {kind}s{where} to look for.");
 
         var run = await runner.RunAsync(account, RunMode.Full, interactive, ct, backfill: GapFinder.Ranges(wanted));
         var state = await schedule.GetAsync(account.Id, ct);
@@ -145,11 +168,31 @@ public sealed class TickRunner(
 
         // What's still missing of what was looked for wasn't on the site.
         var keys = wanted.Select(w => w.Key).ToHashSet();
-        var still = (await GapsAsync(account, ct))?.Slots.Where(x => keys.Contains(x.Key) && x.Wanted).ToList() ?? [];
+        var after = await GapsAsync(account, ct);
+        var still = after?.Slots.Where(x => keys.Contains(x.Key) && after.IsWanted(x)).ToList() ?? [];
         state.GapMarks ??= [];
-        foreach (var x in still) state.GapMarks[x.Key] = GapMark.NotOnline;
+        // On an account that skips quiet months, a period inside the dates the site lists, with nothing
+        // listed for it, had no statement. Before those dates nobody can tell: treated the same, but not confirmed.
+        bool Confirmed(GapSlot x) => gaps.Quiet && run.OldestListed is { } listed && x.Window.To >= listed;
+        foreach (var x in still) state.GapMarks[x.Key] = Confirmed(x) ? GapMark.NoActivity : GapMark.NotOnline;
 
         var found = run.NewDocuments;
+        if (gaps.Quiet)
+        {
+            var confirmed = still.Count(Confirmed);
+            var older = still.Count - confirmed;
+            var months = gaps.Monthly ? "month" : "period";
+            var quietMessage = $"Checked {wanted.Count} {months}{(wanted.Count == 1 ? "" : "s")} without a {kind}{where}: found {found} {kind}{(found == 1 ? "" : "s")} the site had";
+            quietMessage += confirmed > 0 ? $", and confirmed {confirmed} had none." : ".";
+            if (older > 0)
+                quietMessage += $" {older} {(older == 1 ? "is" : "are")} older than the site's records{(run.OldestListed is { } back ? $" (back to {back:MMMM yyyy})" : "")}, so they're treated as having had no activity.";
+            state.LastFill = quietMessage;
+            state.LastFillUtc = clock.GetUtcNow();
+            if (run.OldestListed is not null) state.OldestListed = run.OldestListed;
+            await schedule.SaveAsync(state, ct);
+            await notify.SendDueAsync(ct);
+            return new(found, wanted.Count, older, quietMessage);
+        }
         var message = $"Found {found} of {wanted.Count} missing {kind}{(wanted.Count == 1 ? "" : "s")}{where}.";
         if (still.Count > 0)
         {
@@ -203,7 +246,12 @@ public sealed class TickRunner(
         var docs = await documents.GetAsync(account.Id, ct);
         var delays = CycleEstimator.PostingDelays(docs.Where(d => d.FirstSeenUtc is not null && !d.Imported && !d.Backfilled)
             .Select(d => (d.DocumentDate, DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(d.FirstSeenUtc!.Value, zone).DateTime))));
-        return (CycleEstimator.Estimate(docs.Select(d => d.DocumentDate), delays, config.Schedule.MinSpreadDays, config.Schedule.MaxSpreadDays), docs);
+        var quiet = QuietMonths(account, await schedule.GetAsync(account.Id, ct));
+        var estimate = CycleEstimator.Estimate(docs.Select(d => d.DocumentDate), delays, config.Schedule.MinSpreadDays, config.Schedule.MaxSpreadDays, quiet);
+        // A quiet period that passed without one isn't late: the next one is expected a cycle on.
+        if (quiet && estimate is not null)
+            estimate = SchedulePlanner.RollForward(estimate, DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(clock.GetUtcNow(), zone).DateTime));
+        return (estimate, docs);
     }
 
     public async Task<IReadOnlyList<AccountStatus>> GetStatusAsync(CancellationToken ct = default)
@@ -215,7 +263,7 @@ public sealed class TickRunner(
             var (estimate, docs) = await EstimateAsync(a, ct);
             var state = await schedule.GetAsync(a.Id, ct);
             var decision = a.Enabled
-                ? SchedulePlanner.Decide(a, config.Schedule, estimate, state, clock.GetUtcNow(), zone)
+                ? SchedulePlanner.Decide(a, config.Schedule, estimate, state, clock.GetUtcNow(), zone, QuietMonths(a, state))
                 : new ScheduleDecision(PlannedRun.None, SchedulePhase.Quiet, "disabled");
             list.Add(new(a, await auth.GetAsync(a.Id, ct), estimate, decision, docs.MaxBy(d => d.DocumentDate), docs.Count, issues.Where(i => i.AccountId == a.Id).ToList()));
         }

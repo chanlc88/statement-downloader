@@ -185,7 +185,9 @@ try
                     Console.WriteLine($"{account.Id}: needs at least {GapFinder.MinimumDocuments} {account.KindWord}s on record to know what's missing.");
                     return 0;
                 }
-                Console.WriteLine($"{account.Id}: a {account.KindWord} every ~{gaps.IntervalDays} days; {gaps.MissingCount} missing.");
+                Console.WriteLine(gaps.Quiet
+                    ? $"{account.Id}: a {account.KindWord} every ~{gaps.IntervalDays} days when there's activity; {gaps.Slots.Count(s => s.Mark != GapMark.GetMyself)} periods without one ({gaps.Wanted().Count} not checked with the site yet)."
+                    : $"{account.Id}: a {account.KindWord} every ~{gaps.IntervalDays} days; {gaps.MissingCount} missing.");
                 foreach (var g in gaps.Shown)
                     Console.WriteLine($"  {g.Key,-10} {g.Mark switch { GapMark.NotOnline => "not available online", GapMark.GetMyself => "you're getting it", _ => "missing" }}");
                 return 0;

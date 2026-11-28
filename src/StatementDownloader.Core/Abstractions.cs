@@ -74,6 +74,8 @@ public interface ISiteFetcher
     bool EmailsCode => false;
     /// <summary>Scheduled checks open a visible browser window by themselves (the site needs one, but not you).</summary>
     bool OpensWindow => false;
+    /// <summary>The site only issues statements for periods with activity (Amex): a month without one is normal.</summary>
+    bool QuietMonths => false;
     /// <summary>Reads the date, number and amount printed on a downloaded document; null when it can't.</summary>
     DocumentIdentity? Identify(string path) => null;
     Task<SiteResult> RunAsync(SiteContext context, CancellationToken ct = default);

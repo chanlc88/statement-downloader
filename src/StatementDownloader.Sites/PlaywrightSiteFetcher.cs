@@ -53,6 +53,7 @@ public abstract class PlaywrightSiteFetcher : ISiteFetcher
     public bool NeedsPerson => VisibleOnly && !Unattended;
     public bool OpensWindow => VisibleOnly && Unattended;
     public virtual bool EmailsCode => false;
+    public virtual bool QuietMonths => false;
     public virtual DocumentIdentity? Identify(string path) => null;
 
     public async Task<SiteResult> RunAsync(SiteContext ctx, CancellationToken ct = default)

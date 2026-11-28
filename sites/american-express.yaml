@@ -54,6 +54,8 @@ documents:
     link: { selector: '[data-testid$="/download-button"]' }
     confirm: '[data-test-id$="download-confirm-anchor"]'
   download: click
+  # Amex only issues a statement for a billing period with activity.
+  quietMonths: true
 
 parse:
   require: 'americanexpress\.com'

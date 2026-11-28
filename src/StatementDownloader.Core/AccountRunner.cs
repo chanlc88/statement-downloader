@@ -45,6 +45,8 @@ public sealed class AccountRunner(
 
     /// <summary>The account's site is only visited with the person present.</summary>
     public bool NeedsPerson(AccountConfig account) => sites.TryGetValue(account.Site, out var s) && s.NeedsPerson;
+    /// <summary>The account's site only issues statements for periods with activity.</summary>
+    public bool QuietMonthsBySite(AccountConfig account) => sites.TryGetValue(account.Site, out var s) && s.QuietMonths;
 
     /// <param name="backfill">Filling gaps: download the listed documents dated in these ranges instead of new ones.
     /// They're recorded as backfilled: no review, no actions, no notification each.</param>

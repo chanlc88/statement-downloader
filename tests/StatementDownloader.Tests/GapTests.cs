@@ -105,6 +105,7 @@ public sealed class FillGapsTests : IDisposable
     {
         public string SiteId => "dekalb-water";
         public string DisplayName => "Test";
+        public bool QuietMonths { get; init; }
         public SiteContext? Last { get; private set; }
 
         public Task<SiteResult> RunAsync(SiteContext ctx, CancellationToken ct = default)
@@ -217,5 +218,83 @@ public sealed class FillGapsTests : IDisposable
         var outcome = await ticks.FillGapsAsync(s.Account("water"), year: null, interactive: false);
         Assert.Equal(0, outcome.LookedFor);
         Assert.Null(site.Last);
+    }
+
+    [Fact]
+    public async Task Quiet_months_are_confirmed_inside_the_sites_list_and_treated_as_none_before_it()
+    {
+        // A card with statements only in active months. The site lists Mar 2021 onwards, including a
+        // June statement SD doesn't have.
+        var site = new ListingSite(M(2021, 3), M(2021, 6), M(2021, 9)) { QuietMonths = true };
+        var (s, ticks) = Build(site);
+        await Have(s, M(2020, 10), M(2020, 11), M(2021, 1), M(2021, 3), M(2021, 9));
+        var account = s.Account("water");
+
+        var before = (await ticks.GapsAsync(account))!;
+        Assert.True(before.Quiet);
+        Assert.Equal(0, before.MissingCount);
+        Assert.Empty(before.Shown);
+
+        var outcome = await ticks.FillGapsAsync(account, year: null, interactive: false);
+        Assert.Equal(1, outcome.Found);                                // June
+        var gaps = (await ticks.GapsAsync(account))!;
+        Assert.Equal(GapMark.NotOnline, gaps.Slots.Single(g => g.Key == "2020-12").Mark);   // before the list
+        Assert.Equal(GapMark.NotOnline, gaps.Slots.Single(g => g.Key == "2021-02").Mark);
+        Assert.All(gaps.Slots.Where(g => g.Expected > M(2021, 3)), g => Assert.Equal(GapMark.NoActivity, g.Mark));
+        Assert.Empty(gaps.Wanted());                                   // nothing left to check
+        Assert.Contains("confirmed 4 had none", outcome.Message);      // Apr, May, Jul, Aug
+        Assert.Contains("older than the site's records", outcome.Message);
+
+        // A second check has nothing to do.
+        Assert.Equal(0, (await ticks.FillGapsAsync(account, year: null, interactive: false)).LookedFor);
+    }
+
+    [Fact]
+    public async Task The_person_can_say_otherwise_than_the_site()
+    {
+        var site = new ListingSite(M(2021, 2)) { QuietMonths = true };
+        var (s, ticks) = Build(site);
+        await Have(s, M(2021, 1), M(2021, 3), M(2021, 4));
+        var account = s.Account("water");
+        Assert.Equal(0, (await ticks.GapsAsync(account))!.MissingCount);
+
+        await ticks.SetQuietMonthsAsync(account, false);
+        Assert.Equal(1, (await ticks.GapsAsync(account))!.MissingCount);
+        await ticks.SetQuietMonthsAsync(account, null);
+        Assert.Equal(0, (await ticks.GapsAsync(account))!.MissingCount);
+    }
+}
+
+public class QuietScheduleTests
+{
+    private static readonly ScheduleDefaults Defaults = new();
+    private static readonly AccountConfig Card = new() { Id = "card", Kind = DocumentKind.Statement };
+    private static DateTimeOffset At(int y, int m, int d) => new(y, m, d, 12, 0, 0, TimeSpan.Zero);
+
+    // Statements in active months only: Jan, Feb, May, Jun, Oct 2025 (closing on the 20th).
+    private static readonly DateOnly[] Dates = [new(2025, 1, 20), new(2025, 2, 20), new(2025, 5, 20), new(2025, 6, 20), new(2025, 10, 20)];
+
+    [Fact]
+    public void The_cycle_is_the_usual_month_not_the_median_gap()
+    {
+        Assert.Equal(31, CycleEstimator.Estimate(Dates, [], quietMonths: true)!.IntervalDays);
+        Assert.True(CycleEstimator.Estimate(Dates, [])!.IntervalDays >= 60);
+    }
+
+    [Fact]
+    public void A_month_without_a_statement_is_not_late()
+    {
+        var e = CycleEstimator.Estimate(Dates, [], quietMonths: true)!;
+        // Long after the November window: a regular account would be stale by now.
+        var regular = SchedulePlanner.Decide(Card, Defaults, e, new ScheduleState { AccountId = "card" }, At(2026, 1, 10), TimeZoneInfo.Utc);
+        Assert.Equal(SchedulePhase.Stale, regular.Phase);
+
+        var quiet = SchedulePlanner.Decide(Card, Defaults, e, new ScheduleState { AccountId = "card" }, At(2026, 1, 10), TimeZoneInfo.Utc, quietMonths: true);
+        Assert.Equal(ScheduleNotice.None, quiet.Notice);
+        Assert.NotEqual(SchedulePhase.Overdue, quiet.Phase);
+        Assert.NotEqual(SchedulePhase.Stale, quiet.Phase);
+        // The next window is January's.
+        Assert.Equal(1, quiet.Expected!.Value.Month);
+        Assert.Equal(2026, quiet.Expected!.Value.Year);
     }
 }

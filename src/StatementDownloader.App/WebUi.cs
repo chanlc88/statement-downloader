@@ -75,7 +75,11 @@ public static class WebUi
             var docs = await s.Documents.GetAsync(id, ct);
             var events = await s.Auth.GetEventsAsync(id, ct);
             var sched = await s.Schedule.GetAsync(id, ct);
-            var gaps = GapFinder.Find(docs.Select(d => d.DocumentDate), sched.ExpectFrom, sched.GapMarks);
+            var quiet = s.Ticks.QuietMonths(st.Account, sched);
+            var gaps = GapFinder.Find(docs.Select(d => d.DocumentDate), sched.ExpectFrom, sched.GapMarks, quiet);
+            // Many periods without one, and nobody has said why: perhaps the site skips quiet months.
+            var regular = gaps is null ? 0 : gaps.Slots.Count(x => x.Mark is GapMark.None or GapMark.NotOnline);
+            var suggestQuiet = !quiet && sched.QuietMonths is null && regular >= 6 && regular * 3 >= regular + docs.Count;
             return Results.Ok(new
             {
                 account = AccountView(st, runs, s, events, docs, sched),
@@ -89,6 +93,12 @@ public static class WebUi
                     missing = gaps?.MissingCount ?? 0,
                     slots = gaps?.Slots.OrderByDescending(x => x.Expected).Select(x => new { x.Key, expected = x.Expected, mark = x.Mark }) ?? [],
                     hidden = gaps?.Slots.Count(x => x.Mark == GapMark.NoStatement) ?? 0,
+                    quiet,
+                    // Who decided: "you" (the account page), or "site" (the recipe); null when neither.
+                    quietBy = sched.QuietMonths is not null ? "you" : quiet ? "site" : null,
+                    quietBySite = s.Ticks.QuietMonthsBySite(st.Account),
+                    suggestQuiet,
+                    toCheck = gaps is { Quiet: true } ? gaps.Wanted().Count : 0,
                     expectFrom = sched.ExpectFrom,
                     lastFill = sched.LastFill,
                     sched.LastFillUtc,
@@ -156,6 +166,15 @@ public static class WebUi
             GapMark? m = mark switch { "myself" => GapMark.GetMyself, "none" => GapMark.NoStatement, "clear" => GapMark.None, _ => null };
             if (m is null) return Results.BadRequest();
             await s.Ticks.MarkGapAsync(s.Account(id), key, m.Value, ct);
+            return Results.Ok();
+        });
+
+        // Whether the account only has statements in months with activity: on, off, or site (go by the recipe).
+        write.MapPost("/accounts/{id}/quiet-months", async (string id, string? value, AppServices s, CancellationToken ct) =>
+        {
+            bool?[] parsed = value switch { "on" => [true], "off" => [false], "site" => [null], _ => [] };
+            if (parsed.Length == 0) return Results.BadRequest(new { error = "value must be on, off or site." });
+            await s.Ticks.SetQuietMonthsAsync(s.Account(id), parsed[0], ct);
             return Results.Ok();
         });
 
@@ -362,7 +381,7 @@ public static class WebUi
         {
             pendingReview = mine.Count(d => d.Review == ReviewState.Pending),
             newThisWeek = mine.Count(d => !d.Imported && !d.Backfilled && d.FirstSeenUtc >= weekAgo),
-            missing = GapFinder.Find(mine.Select(d => d.DocumentDate), schedule.ExpectFrom, schedule.GapMarks)?.MissingCount ?? 0,
+            missing = GapFinder.Find(mine.Select(d => d.DocumentDate), schedule.ExpectFrom, schedule.GapMarks, s.Ticks.QuietMonths(st.Account, schedule))?.MissingCount ?? 0,
             lastCheckedUtc = schedule.LastFullCheckUtc,
             signIn = SignInMode(st, s, events),
             a.Id,

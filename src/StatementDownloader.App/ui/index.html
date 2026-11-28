@@ -432,12 +432,24 @@ function documentsHtml(a, documents, gaps) {
   const hasNumber = documents.some(x => x.statementNumber), hasActions = documents.some(x => (x.actions || []).length);
   const imported = documents.filter(x => x.imported).length, backfilled = documents.filter(x => x.backfilled).length;
   const note = `<p class="sub" style="margin:-4px 0 10px">${documents.length - imported - backfilled} downloaded by SD${backfilled ? ` · ${backfilled} found filling gaps` : ""}${imported ? ` · ${imported} imported from your folder` : ""}</p>`;
-  const slots = (gaps.slots || []).filter(g => g.mark !== "no-statement");
-  const wanted = g => g.mark === "none" || g.mark === "not-online";
+  // On an account that only has statements in months with activity, a month without one is normal:
+  // it isn't a row, just a count on the year (except the ones you said you'd get yourself).
+  const quiet = !!gaps.quiet;
+  const allSlots = gaps.slots || [];
+  const slots = allSlots.filter(g => quiet ? g.mark === "get-myself" : !["no-statement", "no-activity"].includes(g.mark));
+  const wanted = g => quiet ? g.mark === "none" : g.mark === "none" || g.mark === "not-online";
   const years = new Map();
   const put = (y, key, item) => { if (!years.has(y)) years.set(y, { docs: [], gaps: [] }); years.get(y)[key].push(item); };
   for (const x of documents) put(String(x.date).slice(0, 4), "docs", x);
   for (const g of slots) put(String(g.expected).slice(0, 4), "gaps", g);
+  const quietByYear = new Map();
+  if (quiet) for (const g of allSlots.filter(g => g.mark !== "get-myself")) {
+    const y = String(g.expected).slice(0, 4);
+    if (!years.has(y)) years.set(y, { docs: [], gaps: [] });
+    const q = quietByYear.get(y) || { none: 0, toCheck: 0 };
+    q.none++; if (g.mark === "none") q.toCheck++;
+    quietByYear.set(y, q);
+  }
   const cols = 3 + hasNumber + hasActions;
   const period = g => gaps.monthly
     ? new Date(g.expected + "T00:00:00").toLocaleDateString(undefined, { month: "short", year: "numeric" })
@@ -461,10 +473,19 @@ function documentsHtml(a, documents, gaps) {
       .sort((p, q) => p[0] < q[0] ? 1 : p[0] > q[0] ? -1 : 0);
     return `<table><tr><th>Date</th><th>Amount</th>${hasNumber ? "<th>Number</th>" : ""}${hasActions ? "<th>Actions</th>" : ""}<th>File</th></tr>${rows.map(r => r[1]).join("")}</table>`;
   };
+  const months = gaps.monthly ? "month" : "period";
   const list = [...years.entries()].sort(([p], [q]) => q.localeCompare(p)).map(([y, item], i) => {
-    const missing = item.gaps.filter(wanted).length, n = item.docs.length;
-    const fillYear = missing ? `<button class="linkbtn" ${busy} onclick="event.preventDefault();fill('${a.id}',${y},this)">Fill this year</button>` : "";
-    return `<details class="year" ${i === 0 ? "open" : ""}><summary>${y} <span class="muted">· ${n} ${esc(a.kind)}${n === 1 ? "" : "s"}</span>${missing ? ` <span class="missing">· ${missing} missing</span>` : ""}${fillYear}</summary>${table(item)}</details>`;
+    const n = item.docs.length, q = quietByYear.get(y);
+    let extra;
+    if (quiet) {
+      extra = q ? ` <span class="muted">· ${q.none} ${months}${q.none === 1 ? "" : "s"} with none${q.toCheck ? ` (${q.toCheck} not checked yet)` : ""}</span>` : "";
+      if (q && q.toCheck) extra += `<button class="linkbtn" ${busy} onclick="event.preventDefault();fill('${a.id}',${y},this)">Check this year</button>`;
+    } else {
+      const missing = item.gaps.filter(wanted).length;
+      extra = missing ? ` <span class="missing">· ${missing} missing</span><button class="linkbtn" ${busy} onclick="event.preventDefault();fill('${a.id}',${y},this)">Fill this year</button>` : "";
+    }
+    const body = item.docs.length || item.gaps.length ? table(item) : `<p class="sub">No ${esc(a.kind)}s this year.</p>`;
+    return `<details class="year" ${i === 0 ? "open" : ""}><summary>${y} <span class="muted">· ${n} ${esc(a.kind)}${n === 1 ? "" : "s"}</span>${extra}</summary>${body}</details>`;
   }).join("");
   return note + gapsBar(a, gaps, busy) + list;
 }
@@ -473,6 +494,7 @@ function documentsHtml(a, documents, gaps) {
 function gapsBar(a, gaps, busy) {
   const kind = esc(a.kind), Kind = esc(a.kind[0].toUpperCase() + a.kind.slice(1));
   if (!gaps.known) return `<p class="sub">Once SD has ${gaps.needs} ${kind}s on record it shows any missing ones here.</p>`;
+  if (gaps.quiet) return quietBar(a, gaps, busy);
   const counted = (gaps.slots || []).filter(g => g.mark === "none" || g.mark === "not-online");
   const ys = counted.map(g => String(g.expected).slice(0, 4));
   const span = ys.length ? (ys[ys.length - 1] === ys[0] ? ` in ${ys[0]}` : ` between ${ys[ys.length - 1]} and ${ys[0]}`) : "";
@@ -480,6 +502,16 @@ function gapsBar(a, gaps, busy) {
     ? `<span class="what s-expiring-soon">${counted.length} ${kind}${counted.length === 1 ? "" : "s"} missing${span}.</span>
        <button class="primary" ${busy} onclick="fill('${a.id}',null,this)">Fill all gaps</button>`
     : `<span class="what s-healthy">No missing ${kind}s.</span>`;
+  // Lots of months without one: ask whether the site only issues them when there's activity.
+  const per = gaps.monthly ? "month" : "period", pers = gaps.monthly ? "months" : "periods";
+  const ask = gaps.suggestQuiet
+    ? `<div class="sub" style="flex-basis:100%">That's a lot of ${pers} without a ${kind}. Some sites, such as American Express, only issue one when there's been activity. Is that what's happening here?
+       <button class="linkbtn" onclick="setQuiet('${a.id}','on',this)">Yes, that's normal</button> · <button class="linkbtn" onclick="setQuiet('${a.id}','off',this)">No, they're missing</button></div>`
+    : gaps.quietBy === "you" && gaps.quietBySite
+    ? `<div class="sub" style="flex-basis:100%">You said this account has a ${kind} every ${per}. <button class="linkbtn" onclick="setQuiet('${a.id}','site',this)">Undo</button></div>`
+    : gaps.quietBy === "you"
+    ? `<div class="sub" style="flex-basis:100%">You said these are missing, not ${pers} without activity. <button class="linkbtn" onclick="setQuiet('${a.id}','site',this)">Undo</button></div>`
+    : "";
   const last = gaps.lastFill ? `<div class="sub" style="flex-basis:100%">Last fill ${ago(gaps.lastFillUtc)}: ${esc(gaps.lastFill)} ${Kind}s found this way are filed without review, and actions don't run on them.</div>` : "";
   const from = gaps.expectFrom ? String(gaps.expectFrom).slice(0, 7) : "";
   const start = `<div class="sub" style="flex-basis:100%">${Kind}s start
@@ -488,7 +520,26 @@ function gapsBar(a, gaps, busy) {
   const noneMarked = (gaps.slots || []).filter(g => g.mark === "no-statement");
   const hidden = noneMarked.length ? `<div class="sub" style="flex-basis:100%">${noneMarked.length} marked as having no ${kind}:
       ${noneMarked.map(g => `${esc(g.key)} <button class="linkbtn" onclick="markGap('${a.id}','${encodeURIComponent(g.key)}','clear',this)">Undo</button>`).join(" · ")}</div>` : "";
-  return `<div class="card gapbar">${what}${last}${start}${hidden}</div>`;
+  return `<div class="card gapbar">${what}${ask}${last}${start}${hidden}</div>`;
+}
+
+/** For an account that only has statements in months with activity: what's been checked with the site, and the switch back. */
+function quietBar(a, gaps, busy) {
+  const kind = esc(a.kind), per = gaps.monthly ? "month" : "period", pers = gaps.monthly ? "months" : "periods";
+  const slots = (gaps.slots || []).filter(g => g.mark !== "get-myself");
+  const confirmed = slots.filter(g => ["no-activity", "no-statement"].includes(g.mark)).length;
+  const older = slots.filter(g => g.mark === "not-online").length;
+  const parts = [];
+  if (confirmed) parts.push(`${confirmed} confirmed with the site`);
+  if (older) parts.push(`${older} older than the site's records`);
+  if (gaps.toCheck) parts.push(`${gaps.toCheck} not checked yet`);
+  const what = `<span class="what s-healthy">${slots.length} ${slots.length === 1 ? per : pers} without a ${kind}${parts.length ? ` · ${parts.join(" · ")}` : ""}</span>
+     ${gaps.toCheck ? `<button class="primary" ${busy} onclick="fill('${a.id}',null,this)" title="Reads the site's list: downloads any ${kind} you don't have, and confirms the ${pers} it has none for">Check for missed ${kind}s</button>` : ""}`;
+  const who = gaps.quietBy === "site" ? "This site only issues" : "You said this account only has";
+  const why = `<div class="sub" style="flex-basis:100%">${who} a ${kind} when there's been activity, so ${pers} without one aren't missing or late.
+      <button class="linkbtn" onclick="setQuiet('${a.id}','${gaps.quietBySite ? "off" : "site"}',this)">It has one every ${per}</button></div>`;
+  const last = gaps.lastFill ? `<div class="sub" style="flex-basis:100%">Last check ${ago(gaps.lastFillUtc)}: ${esc(gaps.lastFill)}</div>` : "";
+  return `<div class="card gapbar">${what}${why}${last}</div>`;
 }
 
 function signInsHtml(signIns) {
@@ -959,6 +1010,10 @@ async function fill(id, year, btn) {
     await post(`/accounts/${encodeURIComponent(id)}/fill${year ? `?year=${year}` : ""}`);
     await new Promise(r => setTimeout(r, 400));
   });
+  render();
+}
+async function setQuiet(id, value, btn) {
+  await working(btn, "Saving…", () => post(`/accounts/${encodeURIComponent(id)}/quiet-months?value=${value}`));
   render();
 }
 async function markGap(id, key, mark, btn) {

@@ -16,15 +16,21 @@ public static class CycleEstimator
 
     /// <param name="documentDates">Dates printed on past documents.</param>
     /// <param name="postingDelays">Days between a document's date and the day it was first found online.</param>
-    public static CycleEstimate? Estimate(IEnumerable<DateOnly> documentDates, IEnumerable<int> postingDelays, int minSpread = 2, int maxSpread = 7)
+    /// <param name="quietMonths">
+    /// The account skips periods without activity: the cycle is the shortest usual interval (as for
+    /// gaps), not the median, which the skipped months would stretch.
+    /// </param>
+    public static CycleEstimate? Estimate(IEnumerable<DateOnly> documentDates, IEnumerable<int> postingDelays, int minSpread = 2, int maxSpread = 7, bool quietMonths = false)
     {
         var dates = documentDates.Distinct().Order().ToList();
         if (dates.Count < MinimumDocuments) return null;
 
         // Recent behaviour matters most: use at most the last 12 intervals (a year of monthly bills).
         var intervals = dates.Zip(dates.Skip(1), (a, b) => b.DayNumber - a.DayNumber).TakeLast(12).ToList();
-        var interval = (int)Math.Round(Median(intervals), MidpointRounding.AwayFromZero);
+        var interval = quietMonths ? GapFinder.Cycle(dates, quiet: true) : (int)Math.Round(Median(intervals), MidpointRounding.AwayFromZero);
         if (interval <= 0) return null;
+        // Skipped periods say nothing about how much a statement's date moves.
+        if (quietMonths) intervals = intervals.Where(i => i < interval * 3 / 2).DefaultIfEmpty(interval).ToList();
 
         var deviation = intervals.Max(i => Math.Abs(i - interval));
         var spread = Math.Clamp(deviation, minSpread, maxSpread);
@@ -86,6 +92,11 @@ public sealed class ScheduleState
     public DateTimeOffset? LastFillUtc { get; set; }
     /// <summary>The oldest document the site listed in the last fill.</summary>
     public DateOnly? OldestListed { get; set; }
+    /// <summary>
+    /// What the person said about whether the account only has statements in months with activity;
+    /// null goes by the site's recipe.
+    /// </summary>
+    public bool? QuietMonths { get; set; }
 }
 
 public enum PlannedRun { None, SignInOnly, FullCheck }
@@ -99,13 +110,18 @@ public sealed record ScheduleDecision(PlannedRun Run, SchedulePhase Phase, strin
 /// <summary>Pure decision logic: what, if anything, to do for an account right now.</summary>
 public static class SchedulePlanner
 {
+    /// <param name="quietMonths">
+    /// The account skips periods without activity: once a window passes with nothing new, the next
+    /// window is expected a cycle later, and nothing is late.
+    /// </param>
     public static ScheduleDecision Decide(
         AccountConfig account,
         ScheduleDefaults defaults,
         CycleEstimate? estimate,
         ScheduleState state,
         DateTimeOffset now,
-        TimeZoneInfo zone)
+        TimeZoneInfo zone,
+        bool quietMonths = false)
     {
         var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(now, zone).DateTime);
         var checkGap = TimeSpan.FromHours(24.0 / Math.Max(1, defaults.ChecksPerDay));
@@ -131,6 +147,12 @@ public static class SchedulePlanner
                     return FullDue(TimeSpan.FromDays(1))
                         ? new(PlannedRun.FullCheck, SchedulePhase.Learning, $"learning the cycle (needs {CycleEstimator.MinimumDocuments} documents)")
                         : new(PlannedRun.None, SchedulePhase.Learning, "learning the cycle; checked today");
+
+                if (quietMonths)
+                {
+                    var e = RollForward(estimate, today);
+                    return InOrBeforeWindow(e.WindowStart, e.WindowEnd, e.NextExpected);
+                }
 
                 if (today > estimate.WindowEnd.AddDays(defaults.OverdueGraceDays))
                     return new(FullDue(TimeSpan.FromDays(7)) ? PlannedRun.FullCheck : PlannedRun.None, SchedulePhase.Stale,
@@ -163,6 +185,18 @@ public static class SchedulePlanner
 
             return new(PlannedRun.None, SchedulePhase.Quiet, $"next window {start:yyyy-MM-dd}–{end:yyyy-MM-dd}", Expected: expected);
         }
+    }
+
+    /// <summary>The estimate's window moved on by whole cycles until it ends today or later.</summary>
+    public static CycleEstimate RollForward(CycleEstimate e, DateOnly today)
+    {
+        var monthly = e.IntervalDays is >= 26 and <= 34;
+        for (var i = 1; e.WindowEnd < today && i < 1000; i++)
+        {
+            var next = monthly ? e.NextExpected.AddMonths(1) : e.NextExpected.AddDays(e.IntervalDays);
+            e = e with { NextExpected = next, WindowStart = next.AddDays(-e.SpreadDays), WindowEnd = next.AddDays(e.SpreadDays) };
+        }
+        return e;
     }
 
     /// <summary>The fixed day-of-month window containing <paramref name="today"/>, or the next one.</summary>

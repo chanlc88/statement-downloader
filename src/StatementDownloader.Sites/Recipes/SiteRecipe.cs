@@ -97,6 +97,11 @@ public sealed class DocumentsRecipe
     /// <summary>On the first run (nothing on record), how far back to download.</summary>
     public string FirstRunLookback { get; set; } = "400d";
     /// <summary>
+    /// The site only issues a statement for a period with activity (Amex cards): a month without
+    /// one isn't counted as missing or late. Each account can say otherwise on its page.
+    /// </summary>
+    public bool QuietMonths { get; set; }
+    /// <summary>
     /// For sites that list one year at a time: steps that switch the list to <c>{year}</c>. When
     /// filling gaps, they're run once for each missing year the first list doesn't show, and that
     /// year's list is read the same way.
