@@ -146,14 +146,18 @@ so a failing sign-in can't loop.
 | `list.link.attribute` | `href` | Attribute holding the URL. |
 | `list.link.pattern` | | Regex to pull the URL out of the attribute (e.g. from an `onclick`). |
 | `list.confirm` | | With `download: click`: an element on the page to click after the link, when the link opens a dialog (for example a file-type choice) whose button starts the download. |
+| `list.open` | | An element on the page to click when a row's link isn't visible — for a list shown in a picker that closes once a document is chosen, so it's opened again for the next one. |
+| `list.settle` | | With `list.confirm`: how long to wait between clicking the link and the confirm button, so the chosen document has loaded (e.g. `4s`). |
 | `list.expand` | | Element in the row to click first when the link is in a details panel the row opens, or is covered until the row is opened. The link selector can reach into the panel with `xpath=following-sibling::tr[1]//a`. |
 | `download` | `fetch` | `fetch`: request the URL with the browser's cookies (fast, works for direct PDF links). `click`: click the link and save the file the browser downloads — the link then needs no URL (script-driven buttons are fine). `popup`: click the link; the site opens the PDF in a new window (often a `blob:` address made by its own script), which is saved and closed. Use it when the site fetches PDFs with its own sign-in token, so a plain `fetch` gets "Unauthorized". |
 | `years` | | For sites whose list shows one year at a time: steps (as in `steps`) that switch it to `{year}`, usually a `select` with `option: '{year}'` and a wait for the list to reload. When filling gaps, they're run for each missing year the first list shows nothing from, newest first, and that year's list is read the same way. A year the drop-down doesn't offer is skipped; a year with no rows is fine. |
 | `firstRunLookback` | `400d` | With nothing on record yet, how far back to download. Later runs only download documents newer than the newest on record; older gaps are filled with **Fill all gaps** on the account page (it downloads whatever the list shows in the missing months). |
 
 A **field** (`date`, `amount`) is either `{ column: N }` — the Nth cell of the row,
-counting from 1 — or `{ selector: <inside the row> }`, plus an optional `pattern` to take
-part of the text: `{ column: 1, pattern: 'Statement (\S+)' }`.
+counting from 1 — or `{ selector: <inside the row> }`, or `{ attribute: <name> }` to read an
+attribute (of the selector, or of the row itself when there's no selector, e.g.
+`{ attribute: aria-label }`), plus an optional `pattern` to take part of the text:
+`{ column: 1, pattern: 'Statement (\S+)' }`.
 
 Only rows dated after the newest document on record are downloaded, except when filling gaps, which downloads rows dated in the missing months.
 
